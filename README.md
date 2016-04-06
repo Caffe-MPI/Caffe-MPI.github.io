@@ -1,7 +1,7 @@
 
 Caffe-MPI for Deep Learning
 ============ 
-![ID](http://image.baidu.com/search/down?tn=download&word=download&ie=utf8&fr=detail&url=http%3A%2F%2Fpic27.nipic.com%2F20130401%2F2822139_101059315193_2.jpg&thumburl=http%3A%2F%2Fimg2.imgtn.bdimg.com%2Fit%2Fu%3D38285803%2C1699496659%26fm%3D21%26gp%3D0.jpg)
+![ID](http://image.baidu.com/search/down?tn=download&word=download&ie=utf8&fr=detail&url=http%3A%2F%2Fwww.intel.cn%2Fcontent%2Fdam%2Fwww%2Fpublic%2Fus%2Fen%2Fimages%2Fphotography%2Fthird-party-logos%2Finspur-logo.png&thumburl=http%3A%2F%2Fimg4.imgtn.bdimg.com%2Fit%2Fu%3D2605270452%2C2209814552%26fm%3D21%26gp%3D0.jpg)
 #Introduction
 
 Caffe-MPI is a deep learning framework designed for both efficiency and flexibility, developed by HPC development team of inspur. It is a GPU cluster version, which is designed and developed on the BVLC single GPU version ( https://github.com/BVLC/caffe, more details please visit http://caffe.berkeleyvision.org).
