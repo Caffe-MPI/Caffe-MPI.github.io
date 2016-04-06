@@ -1,11 +1,11 @@
 
 Caffe-MPI for Deep Learning
- 
-Introduction
+============ 
+#Introduction
 
 Caffe-MPI is a deep learning framework designed for both efficiency and flexibility, developed by HPC development team of inspur. It is a GPU cluster version, which is designed and developed on the BVLC single GPU version ( https://github.com/BVLC/caffe, more details please visit http://caffe.berkeleyvision.org).
 
-Features
+#Features
  
 (1) The design based on HPC system 
 
@@ -19,11 +19,11 @@ The model can be trained on multi-node-multi-GPU-card platform through Caffe-MPI
 
 Caffe-MPI retains all the features of the original Caffe architecture, namely the pure C++/CUDA architecture, support of the command line, Python interfaces, and various programming methods. As a result, the cluster version of the Caffe framework is user-friendly, fast, modularized and open, and gives users the optimal application experience. 
 
-How to use it
+#How to use it
 
 See Caffe-MPI user guide.pdf
 
-Try your first MPI Caffe
+#Try your first MPI Caffe
 
 This program can run 2 processes at least.
 
@@ -38,23 +38,23 @@ cifar10
 4.	Example of mpi_train_quick.sh script.
 mpirun -machinefile hostsib -n 17 ./build/tools/caffe train \ --solver=examples/cifar10/cifar10_quick_solver.prototxt 
 
-Reference
+#Reference
 
 1)	More Effective Distributed ML via a Stale Synchronous Parallel Parameter Server
 
 2)	Deep Image: Scaling up Image Recognition
 
-Ask Questions
+#Ask Questions
 
 •	For reporting bugs, please use the caffe-mpi/issues page or send email to us.
 
 •	Email address: Caffe@inspur.com
 
-Author
+#Author
 
 Zhang,Qing; Wang,Yajuan;Gong;Zhan; Shen,Bo ;
 
-Acknowledgements
+#Acknowledgements
 
 The Caffe-MPI developers would like to thank
 QiHoo(Zhang,Gang ; Dr.Hu,Jinhui)
