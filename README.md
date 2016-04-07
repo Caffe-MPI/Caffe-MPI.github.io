@@ -26,9 +26,9 @@ This program can run 2 processes at least.
 ####cifar10
   1.	Run data/cifar10/get_cifar10.sh to get cifar10 data.
   2.	Run examples/cifar10/create_cifar10.sh to conver raw data to leveldb format.
-  3.	Run examples/cifar10/mpi_train_quick.sh to train the net. You can modify the "-n 16" to set new process number where 16 is the number of parallel processes, (if you use GPUs, the process number is m+1, m is GPU number) the "-host node11" is the node name in mpi_train_quick.sh script.
+  3.	Run examples/cifar10/mpi_train_quick.sh to train the net. You can modify the "-n 16" to set new process number where 16 is the number of parallel processes, (if you use GPUs, the process number is m+node_num, m is GPU number) the "-host node11" is the node name in mpi_train_quick.sh script.
   4.	Example of mpi_train_quick.sh script.
-mpirun -machinefile hostsib -n 17 ./build/tools/caffe train \ --solver=examples/cifar10/cifar10_quick_solver.prototxt 
+mpirun -machinefile hostsib -n 20 ./build/tools/caffe train \ --solver=examples/cifar10/cifar10_quick_solver.prototxt 
 
 #Reference
 
