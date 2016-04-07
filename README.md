@@ -18,7 +18,7 @@ The model can be trained on multi-node-multi-GPU-card platform through Caffe-MPI
 Caffe-MPI retains all the features of the original Caffe architecture, namely the pure C++/CUDA architecture, support of the command line, Python interfaces, and various programming methods. As a result, the cluster version of the Caffe framework is user-friendly, fast, modularized and open, and gives users the optimal application experience. 
 
 #How to use it
-  See Caffe-MPI user guide.pdf
+  [See Caffe-MPI user guide.pdf](http://pan.baidu.com/s/1bpiDpfx)
 
 #Try your first MPI Caffe
 This program can run 2 processes at least.
