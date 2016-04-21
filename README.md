@@ -1,4 +1,4 @@
-![ID](http://g.picphotos.baidu.com/album/s%3D1100%3Bq%3D90/sign=9da6e9c4ff1986184547eb857add1502/77c6a7efce1b9d16d347f6c4f4deb48f8d546496.jpg)
+![ID](http://xiangce.baidu.com/picture/detail/f364a91cf177affd9bac79463ae48222862ad1f1?from=dialog#picSign=f364a91cf177affd9bac79463ae48222862ad1f1)
 Caffe-MPI for Deep Learning                                                                         
 ============ 
 
