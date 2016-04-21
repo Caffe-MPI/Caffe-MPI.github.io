@@ -1,4 +1,4 @@
-![ID](http://hot.baidupcs.com/file/900b80047bc925bd88691fc03bf37407?bkt=p3-1400900b80047bc925bd88691fc03bf37407213793f2000000001774&fid=2081420161-246327-727563278036500&time=1459933657&sign=FDTAXGEROLBH-DCb740ccc5511e5e8fedcff06b081203-egYkRjqoUcFEUg6mj7zc7nSREbE%3D&to=hb&fm=Yan,B,U,t&sta_dx=0&sta_cs=0&sta_ft=png&sta_ct=0&fm2=Yangquan,B,U,t&newver=1&newfm=1&secfm=1&flow_ver=3&pkey=1400900b80047bc925bd88691fc03bf37407213793f2000000001774&sl=76808268&expires=1460020057&rt=sh&r=924852472&mlogid=2243062048564715141&owner=246327&vuk=2081420161&vbdid=4204541105&fin=Inspur.png&fn=Inspur.png&slt=pm&uta=0&rtype=1&iv=0&isw=0&dp-logid=2243062048564715141&dp-callid=0.1.1)
+![ID](http://g.picphotos.baidu.com/album/s%3D1100%3Bq%3D90/sign=9da6e9c4ff1986184547eb857add1502/77c6a7efce1b9d16d347f6c4f4deb48f8d546496.jpg)
 Caffe-MPI for Deep Learning                                                                         
 ============ 
 
