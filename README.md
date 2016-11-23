@@ -5,52 +5,7 @@
 <!DOCTYPE html>
 <html lang="en" class=" is-copy-enabled is-u2f-enabled">
   <head prefix="og: http://ogp.me/ns# fb: http://ogp.me/ns/fb# object: http://ogp.me/ns/object# article: http://ogp.me/ns/article# profile: http://ogp.me/ns/profile#">
-    <meta charset='utf-8'>
-    
-
-    <link crossorigin="anonymous" href="https://assets-cdn.github.com/assets/frameworks-92d354668263723b226099d22b6ff9945593c2bfe41f4403b91481b735f484b0.css" integrity="sha256-ktNUZoJjcjsiYJnSK2/5lFWTwr/kH0QDuRSBtzX0hLA=" media="all" rel="stylesheet" />
-    <link crossorigin="anonymous" href="https://assets-cdn.github.com/assets/github-80667d0db6e3aec8da833d2456f89593862ab0d9c075941739835d0e6d430597.css" integrity="sha256-gGZ9Dbbjrsjagz0kVviVk4YqsNnAdZQXOYNdDm1DBZc=" media="all" rel="stylesheet" />
-    
-    
-    
-    
-
-    <meta http-equiv="X-UA-Compatible" content="IE=edge">
-    <meta http-equiv="Content-Language" content="en">
-    <meta name="viewport" content="width=device-width">
-    
-    <title>Caffe-MPI.github.io/README.md at master · Caffe-MPI/Caffe-MPI.github.io</title>
-    <link rel="search" type="application/opensearchdescription+xml" href="/opensearch.xml" title="GitHub">
-    <link rel="fluid-icon" href="https://github.com/fluidicon.png" title="GitHub">
-    <link rel="apple-touch-icon" href="/apple-touch-icon.png">
-    <link rel="apple-touch-icon" sizes="57x57" href="/apple-touch-icon-57x57.png">
-    <link rel="apple-touch-icon" sizes="60x60" href="/apple-touch-icon-60x60.png">
-    <link rel="apple-touch-icon" sizes="72x72" href="/apple-touch-icon-72x72.png">
-    <link rel="apple-touch-icon" sizes="76x76" href="/apple-touch-icon-76x76.png">
-    <link rel="apple-touch-icon" sizes="114x114" href="/apple-touch-icon-114x114.png">
-    <link rel="apple-touch-icon" sizes="120x120" href="/apple-touch-icon-120x120.png">
-    <link rel="apple-touch-icon" sizes="144x144" href="/apple-touch-icon-144x144.png">
-    <link rel="apple-touch-icon" sizes="152x152" href="/apple-touch-icon-152x152.png">
-    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon-180x180.png">
-    <meta property="fb:app_id" content="1401488693436528">
-
-      <meta content="https://avatars3.githubusercontent.com/u/18209474?v=3&amp;s=400" name="twitter:image:src" /><meta content="@github" name="twitter:site" /><meta content="summary" name="twitter:card" /><meta content="Caffe-MPI/Caffe-MPI.github.io" name="twitter:title" /><meta content="Contribute to Caffe-MPI.github.io development by creating an account on GitHub." name="twitter:description" />
-      <meta content="https://avatars3.githubusercontent.com/u/18209474?v=3&amp;s=400" property="og:image" /><meta content="GitHub" property="og:site_name" /><meta content="object" property="og:type" /><meta content="Caffe-MPI/Caffe-MPI.github.io" property="og:title" /><meta content="https://github.com/Caffe-MPI/Caffe-MPI.github.io" property="og:url" /><meta content="Contribute to Caffe-MPI.github.io development by creating an account on GitHub." property="og:description" />
-      <meta name="browser-stats-url" content="https://api.github.com/_private/browser/stats">
-    <meta name="browser-errors-url" content="https://api.github.com/_private/browser/errors">
-    <link rel="assets" href="https://assets-cdn.github.com/">
-    <link rel="web-socket" href="wss://live.github.com/_sockets/MTgyMDk0NzQ6NTUwMzZkYjhlZWY0N2NiNzA5NDUxNzJjZDU1YTU5NzQ6ZTU0ZjMxMDExOWNjNzg3OGFkNGZlYWQxMzJiOGQ0MWM0OTg2Y2Y1YjZmMzMzZTEyZWE1OTcyNjhiMmM3ODc2NA==--5ed4ab7c972cdf21f580fe394851287ceedea4c5">
-    <meta name="pjax-timeout" content="1000">
-    <link rel="sudo-modal" href="/sessions/sudo_modal">
-    <meta name="request-id" content="7B3B0367:4CD6:171A037B:5834F0E7" data-pjax-transient>
-
-    <meta name="msapplication-TileImage" content="/windows-tile.png">
-    <meta name="msapplication-TileColor" content="#ffffff">
-    <meta name="selected-link" value="repo_source" data-pjax-transient>
-
-    <meta name="google-site-verification" content="KT5gs8h0wvaagLKAVWq8bbeNwnZZK1r1XQysX3xurLU">
-<meta name="google-site-verification" content="ZzhVyEFwb7w3e0-uOTltm8Jsck2F5StVihD0exw2fsA">
-    <meta name="google-analytics" content="UA-3769691-2">
+   
 
 <meta content="collector.githubapp.com" name="octolytics-host" /><meta content="github" name="octolytics-app-id" /><meta content="7B3B0367:4CD6:171A037B:5834F0E7" name="octolytics-dimension-request_id" /><meta content="18209474" name="octolytics-actor-id" /><meta content="Caffe-MPI" name="octolytics-actor-login" /><meta content="42450ebaa0020f4a77151219cf36c6b45d77747006f61410052dab4cda4e61de" name="octolytics-actor-hash" />
 <meta content="/&lt;user-name&gt;/&lt;repo-name&gt;/blob/show" data-pjax-transient="true" name="analytics-location" />
