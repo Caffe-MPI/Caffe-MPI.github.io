@@ -20,6 +20,7 @@ class SGDSolver : public Solver<Dtype> {
   explicit SGDSolver(const string& param_file)
       : Solver<Dtype>(param_file) { PreSolve(); }
   virtual inline const char* type() const { return "SGD"; }
+
   const vector<shared_ptr<Blob<Dtype> > >& history() { return history_; }
 
  protected:
@@ -35,17 +36,6 @@ class SGDSolver : public Solver<Dtype> {
   virtual void SnapshotSolverStateToHDF5(const string& model_filename);
   virtual void RestoreSolverStateFromHDF5(const string& state_file);
   virtual void RestoreSolverStateFromBinaryProto(const string& state_file);
-  //For MPI
-  //Added by ZhuHui 20151030
-  
-  //void ComputeUpdateValue();
-  //virtual void ComputeUpdateValueClient();
-  //virtual void ComputeUpdateValueServerThread();
-  //virtual void ComputeUpdateValueServerThreadGPU();
-  //virtual void ComputeUpdateValueClientThread(int& mpi_source,int tid);
-  //virtual void GetValue(int &mpi_source,const int tid);
-
-  
   // history maintains the historical momentum data.
   // update maintains update related data and is not needed in snapshots.
   // temp maintains other information that might be needed in computation

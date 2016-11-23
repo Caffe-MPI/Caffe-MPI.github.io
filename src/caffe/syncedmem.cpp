@@ -1,5 +1,3 @@
-#include <cstring>
-
 #include "caffe/common.hpp"
 #include "caffe/syncedmem.hpp"
 #include "caffe/util/math_functions.hpp"
@@ -25,7 +23,6 @@ SyncedMemory::~SyncedMemory() {
 }
 
 inline void SyncedMemory::to_cpu() {
-  //LOG(INFO)<<"gpu_ptr="<<gpu_ptr_;
   switch (head_) {
   case UNINITIALIZED:
     CaffeMallocHost(&cpu_ptr_, size_, &cpu_malloc_use_cuda_);
@@ -60,7 +57,6 @@ inline void SyncedMemory::to_gpu() {
     caffe_gpu_memset(size_, 0, gpu_ptr_);
     head_ = HEAD_AT_GPU;
     own_gpu_data_ = true;
-    //LOG(INFO)<<"gpu_ptr="<<gpu_ptr_;
     break;
   case HEAD_AT_CPU:
     if (gpu_ptr_ == NULL) {
@@ -74,8 +70,7 @@ inline void SyncedMemory::to_gpu() {
   case HEAD_AT_GPU:
   case SYNCED:
     break;
- 
- }
+  }
 #else
   NO_GPU;
 #endif
@@ -102,6 +97,7 @@ const void* SyncedMemory::gpu_data() {
   return (const void*)gpu_ptr_;
 #else
   NO_GPU;
+  return NULL;
 #endif
 }
 
@@ -138,6 +134,7 @@ void* SyncedMemory::mutable_gpu_data() {
   return gpu_ptr_;
 #else
   NO_GPU;
+  return NULL;
 #endif
 }
 

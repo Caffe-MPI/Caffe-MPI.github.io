@@ -106,19 +106,13 @@ void SGDSolver<Dtype>::ApplyUpdate() {
     LOG(INFO) << "Iteration " << this->iter_ << ", lr = " << rate;
   }
   ClipGradients();
-  //LOG(INFO) << "Clip Complete";
- for (int param_id = 0; param_id < this->net_->learnable_params().size();
+  for (int param_id = 0; param_id < this->net_->learnable_params().size();
        ++param_id) {
     Normalize(param_id);
     Regularize(param_id);
     ComputeUpdateValue(param_id, rate);
-   
   }
-  //LOG(INFO)<<"Before Update";
   this->net_->Update();
-  //LOG(INFO)<<"After Update";
-
-// ComputeUpdateValue();
 }
 
 template <typename Dtype>
@@ -209,6 +203,12 @@ void SGDSolver<Dtype>::Regularize(int param_id) {
   }
 }
 
+#ifndef CPU_ONLY
+template <typename Dtype>
+void sgd_update_gpu(int N, Dtype* g, Dtype* h, Dtype momentum,
+    Dtype local_rate);
+#endif
+
 template <typename Dtype>
 void SGDSolver<Dtype>::ComputeUpdateValue(int param_id, Dtype rate) {
   const vector<Blob<Dtype>*>& net_params = this->net_->learnable_params();
@@ -228,12 +228,10 @@ void SGDSolver<Dtype>::ComputeUpdateValue(int param_id, Dtype rate) {
   }
   case Caffe::GPU: {
 #ifndef CPU_ONLY
-    caffe_gpu_axpby(net_params[param_id]->count(), local_rate,
-              net_params[param_id]->gpu_diff(), momentum,
-              history_[param_id]->mutable_gpu_data());
-    caffe_copy(net_params[param_id]->count(),
-        history_[param_id]->gpu_data(),
-        net_params[param_id]->mutable_gpu_diff());
+    sgd_update_gpu(net_params[param_id]->count(),
+        net_params[param_id]->mutable_gpu_diff(),
+        history_[param_id]->mutable_gpu_data(),
+        momentum, local_rate);
 #else
     NO_GPU;
 #endif
@@ -243,12 +241,7 @@ void SGDSolver<Dtype>::ComputeUpdateValue(int param_id, Dtype rate) {
     LOG(FATAL) << "Unknown caffe mode: " << Caffe::mode();
   }
 }
-/*
-        template <typename Dtype>
-                void SGDSolver<Dtype>::ComputeUpdateValue(){
-                        Solver<Dtype>::ComputeUpdateValue();
-                }
-*/
+
 template <typename Dtype>
 void SGDSolver<Dtype>::SnapshotSolverState(const string& model_filename) {
   switch (this->param_.snapshot_format()) {

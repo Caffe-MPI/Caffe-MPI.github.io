@@ -13,82 +13,6 @@
 namespace caffe {
 
 template<typename Dtype>
-void DataTransformer<Dtype>::Transform(const int batch_item_id,
-                                       const Datum& datum,
-                                       const Dtype* mean,
-                                       Dtype* transformed_data) {
-  const string& data = datum.data();
-  const int channels = datum.channels();
-  const int height = datum.height();
-  const int width = datum.width();
-  const int size = datum.channels() * datum.height() * datum.width();
-  const int crop_size = param_.crop_size();
-  const bool mirror = param_.mirror();
-  const Dtype scale = param_.scale();
-  if (mirror && crop_size == 0) {
-    LOG(FATAL) << "Current implementation requires mirror and crop_size to be "
-               << "set at the same time.";
-  }
-  if (crop_size) {
-    CHECK(data.size()) << "Image cropping only support uint8 data";
-    int h_off, w_off;
-  
-    if (phase_ == Caffe::TRAIN) {
-      h_off = Rand(height - crop_size);
-      w_off = Rand(width - crop_size);
-    } else {
-      h_off = (height - crop_size) / 2;
-      w_off = (width - crop_size) / 2;
-    }
-    if (mirror && Rand(2) ) {
-   
-      for (int c = 0; c < channels; ++c) {
-        for (int h = 0; h < crop_size; ++h) {
-          for (int w = 0; w < crop_size; ++w) {
-            int data_index = (c * height + h + h_off) * width + w + w_off;
-            int top_index = ((batch_item_id * channels + c) * crop_size + h) * crop_size + (crop_size - 1 - w);
-               
-            Dtype datum_element =
-                static_cast<Dtype>(static_cast<uint8_t>(data[data_index]));
-            transformed_data[top_index] =
-                (datum_element - mean[data_index]) * scale;
-          }
-        }
-      }
-    } else {
-    
-      for (int c = 0; c < channels; ++c) {
-        for (int h = 0; h < crop_size; ++h) {
-          for (int w = 0; w < crop_size; ++w) {
-            int top_index = ((batch_item_id * channels + c) * crop_size + h)* crop_size + w;
-                
-            int data_index = (c * height + h + h_off) * width + w + w_off;
-            Dtype datum_element =
-                static_cast<Dtype>(static_cast<uint8_t>(data[data_index]));
-            transformed_data[top_index] =
-                (datum_element - mean[data_index]) * scale;
-          }
-        }
-      }
-    }
-  } else {
-    if (data.size()) {
-      for (int j = 0; j < size; ++j) {
-        Dtype datum_element =
-            static_cast<Dtype>(static_cast<uint8_t>(data[j]));
-        transformed_data[j + batch_item_id * size] =
-            (datum_element - mean[j]) * scale;
-      }
-    } else {
-      for (int j = 0; j < size; ++j) {
-        transformed_data[j + batch_item_id * size] =
-            (datum.float_data(j) - mean[j]) * scale;
-      }
-    }
-  }
-}
-
-template<typename Dtype>
 DataTransformer<Dtype>::DataTransformer(const TransformationParameter& param,
     Phase phase)
     : param_(param), phase_(phase) {
@@ -113,6 +37,136 @@ DataTransformer<Dtype>::DataTransformer(const TransformationParameter& param,
     }
   }
 }
+
+template<typename Dtype>
+void DataTransformer<Dtype>::Transform(const int batch_item_id,
+                                       const Datum& datum,
+                                       const Dtype* mean11,
+                                       Dtype* transformed_data) {
+  const string& data = datum.data();
+  const int channels = datum.channels();
+  const int height = datum.height();
+  const int width = datum.width();
+  const int size = datum.channels() * datum.height() * datum.width();
+  const int crop_size = param_.crop_size();
+  const bool mirror = param_.mirror();
+  const Dtype scale = param_.scale();
+  const bool has_mean_file = param_.has_mean_file();
+  const bool has_mean_values = mean_values_.size() > 0;
+
+  if (mirror && crop_size == 0) {
+    LOG(FATAL) << "Current implementation requires mirror and crop_size to be "
+               << "set at the same time.";
+  }
+Dtype* mean = NULL;
+  if (has_mean_file) {
+    mean = data_mean_.mutable_cpu_data();
+  }
+  if (has_mean_values) {
+    if (channels > 1 && mean_values_.size() == 1) {
+      // Replicate the mean_value for simplicity
+             for (int c = 1; c < channels; ++c) {
+                     mean_values_.push_back(mean_values_[0]);
+                           }
+                        }
+                   }
+      
+  if (crop_size) {
+    CHECK(data.size()) << "Image cropping only support uint8 data";
+    int h_off, w_off;
+
+    if (phase_ == TRAIN) {
+      h_off = Rand(height - crop_size);
+      w_off = Rand(width - crop_size);
+    } else {
+      h_off = (height - crop_size) / 2;
+      w_off = (width - crop_size) / 2;
+    }
+    if (mirror && Rand(2) ) {
+
+      for (int c = 0; c < channels; ++c) {
+        for (int h = 0; h < crop_size; ++h) {
+          for (int w = 0; w < crop_size; ++w) {
+            int data_index = (c * height + h + h_off) * width + w + w_off;
+            int top_index = ((batch_item_id * channels + c) * crop_size + h) * crop_size + (crop_size - 1 - w);
+Dtype datum_element =
+                static_cast<Dtype>(static_cast<uint8_t>(data[data_index]));
+	if(has_mean_file){
+            transformed_data[top_index] =
+                (datum_element - mean[data_index]) * scale;
+		}else{
+			if(has_mean_values){
+				transformed_data[top_index] = (datum_element - mean_values_[c])*scale;
+			}else{
+				transformed_data[top_index] = datum_element*scale;
+			}
+		}
+          }
+        }
+      }
+    } else {
+
+      for (int c = 0; c < channels; ++c) {
+        for (int h = 0; h < crop_size; ++h) {
+          for (int w = 0; w < crop_size; ++w) {
+            int top_index = ((batch_item_id * channels + c) * crop_size + h)* crop_size + w;
+
+            int data_index = (c * height + h + h_off) * width + w + w_off;
+            Dtype datum_element =
+                static_cast<Dtype>(static_cast<uint8_t>(data[data_index]));
+            if(has_mean_file){
+		transformed_data[top_index] =
+                (datum_element - mean[data_index]) * scale;
+		}else{
+		if(has_mean_values){
+				transformed_data[top_index] = (datum_element - mean_values_[c])*scale;
+			}else{
+				transformed_data[top_index] = datum_element * scale;
+			}
+		
+		}
+          }
+        }
+      }
+    }
+  } else {
+    if (data.size()) {
+      for (int j = 0; j < size; ++j) {
+        Dtype datum_element =
+            static_cast<Dtype>(static_cast<uint8_t>(data[j]));
+	if (has_mean_file) {
+          transformed_data[j + batch_item_id * size] =
+            (datum_element - mean[j]) * scale;
+        } else {
+          if (has_mean_values) {
+            transformed_data[j + batch_item_id * size] =
+              (datum_element - mean_values_[j]) * scale;
+          } else {
+            transformed_data[j + batch_item_id * size] = datum_element * scale;
+          }
+        }
+
+      }
+    } else {
+	for (int j = 0; j < size; ++j) {
+Dtype datum_element=datum.float_data(j);
+if (has_mean_file) {
+          transformed_data[j + batch_item_id * size] =
+            (datum_element - mean[j]) * scale;
+        } else {
+          if (has_mean_values) {
+            transformed_data[j + batch_item_id * size] =
+              (datum_element - mean_values_[j]) * scale;
+          } else {
+            transformed_data[j + batch_item_id * size] = datum_element * scale;
+          }
+        }
+      
+}
+    }
+  }
+}
+
 
 template<typename Dtype>
 void DataTransformer<Dtype>::Transform(const Datum& datum,

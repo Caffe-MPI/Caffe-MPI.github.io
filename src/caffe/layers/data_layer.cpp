@@ -3,15 +3,11 @@
 #endif  // USE_OPENCV
 #include <stdint.h>
 
-#include <string>
 #include <vector>
 
-#include "caffe/common.hpp"
-#include "caffe/data_layers.hpp"
-#include "caffe/layer.hpp"
-#include "caffe/proto/caffe.pb.h"
+#include "caffe/data_transformer.hpp"
+#include "caffe/layers/data_layer.hpp"
 #include "caffe/util/benchmark.hpp"
-#include "caffe/util/io.hpp"
 
 namespace caffe {
 
@@ -30,7 +26,7 @@ template <typename Dtype>
 void DataLayer<Dtype>::DataLayerSetUp(const vector<Blob<Dtype>*>& bottom,
       const vector<Blob<Dtype>*>& top) {
   const int batch_size = this->layer_param_.data_param().batch_size();
-// Read a data point, and use it to initialize the top blob.
+  // Read a data point, and use it to initialize the top blob.
   Datum& datum = *(reader_.full().peek());
 
   // Use data_transformer to infer the expected blob shape from datum.
@@ -43,7 +39,6 @@ void DataLayer<Dtype>::DataLayerSetUp(const vector<Blob<Dtype>*>& bottom,
   for (int i = 0; i < this->PREFETCH_COUNT; ++i) {
     this->prefetch_[i].data_.Reshape(top_shape);
   }
-	LOG(INFO)<<"#####################################3";
   LOG(INFO) << "output data size: " << top[0]->num() << ","
       << top[0]->channels() << "," << top[0]->height() << ","
       << top[0]->width();
@@ -60,9 +55,7 @@ void DataLayer<Dtype>::DataLayerSetUp(const vector<Blob<Dtype>*>& bottom,
   this->datum_height_ = datum.height();
   this->datum_width_ = datum.width();
   this->datum_size_ = datum.channels() * datum.height() * datum.width();
-// LOG(INFO)<<"TAG_DATA_recv"<<top[0]->gpu_data()[0];
 }
-
 
 // This function is called on prefetch thread
 template<typename Dtype>
@@ -105,8 +98,6 @@ void DataLayer<Dtype>::load_batch(Batch<Dtype>* batch) {
     // Copy label.
     if (this->output_labels_) {
       top_label[item_id] = datum.label();
-      int offset_label = batch->label_.offset(item_id);
-      this->transformed_label_.set_cpu_data(top_label+offset_label);
     }
     trans_time += timer.MicroSeconds();
 
@@ -119,12 +110,11 @@ void DataLayer<Dtype>::load_batch(Batch<Dtype>* batch) {
   DLOG(INFO) << "Transform time: " << trans_time / 1000 << " ms.";
 }
 
-
 template <typename Dtype>
 void DataLayer<Dtype>::ReadData(shared_ptr<db::Cursor>& cursor,
-	Blob<Dtype>& lprefetch_data_, 
-	Blob<Dtype>& lprefetch_label_) {
-	Datum datum;
+        Blob<Dtype>& lprefetch_data_,
+        Blob<Dtype>& lprefetch_label_) {
+        Datum datum;
   CHECK(lprefetch_data_.count());
   Dtype* top_data = lprefetch_data_.mutable_cpu_data();
   Dtype* top_label = NULL;  // suppress warnings about uninitialized variables
@@ -133,111 +123,48 @@ void DataLayer<Dtype>::ReadData(shared_ptr<db::Cursor>& cursor,
   }
   const int batch_size = this->layer_param_.data_param().batch_size();
   for (int item_id = 0; item_id < batch_size; ++item_id) {
-    // get a blob
-   // leveldb::Iterator* liter_;
-   // MDB_cursor *lmdb_cursor_; 
-    switch (this->layer_param_.data_param().backend()) {
-    case DataParameter_DB_LEVELDB:
-     // liter_=static_cast<leveldb::Iterator*>(cursor.get());
-     // CHECK(liter_);
-     // CHECK(liter_->Valid());
-      //datum.ParseFromString(liter_->value().ToString());
-        CHECK(cursor);
-	CHECK(cursor->valid());
-	datum.ParseFromString(cursor->value());
-	 break;
-    case DataParameter_DB_LMDB:
-      //lmdb_cursor_=static_cast<MDB_cursor*>(cursor.get());
-     // CHECK_EQ(mdb_cursor_get(lmdb_cursor_, &lmdb_key_,
-      //        &lmdb_value_, MDB_GET_CURRENT), MDB_SUCCESS);
-      //datum.ParseFromArray(lmdb_value_.mv_data,
-      //    lmdb_value_.mv_size);
-        CHECK(cursor->valid());   
-     	datum.ParseFromString(cursor->value());
-	 break;
-    default:
-      LOG(FATAL) << "Unknown database backend";
-    }
-
-   
-    // Apply data transformations (mirror, scale, crop...)
-  // (*(this->data_transformer_)).Transform(datum, top_data+item_id);
-    (*(this->data_transformer_)).Transform(item_id, datum, this->mean_, top_data);
+        switch (this->layer_param_.data_param().backend()) {
+        case DataParameter_DB_LEVELDB:
+                CHECK(cursor);
+                CHECK(cursor->valid());
+                datum.ParseFromString(cursor->value());
+                break;
+        case DataParameter_DB_LMDB:
+                CHECK(cursor->valid());
+                datum.ParseFromString(cursor->value());
+                break;
+        default:
+                LOG(FATAL) << "Unknown database backend";
+        }
+        (*(this->data_transformer_)).Transform(item_id, datum, this->mean_, top_data);
+//    (*(this->data_transformer_)).Transform(datum, top_data+item_id);
     if (this->output_labels_) {
       top_label[item_id] = datum.label();
     }
-
-    // go to the next iter
-    cursor->Next();
+cursor->Next();
     if(!(cursor->valid()))
          cursor->SeekToFirst();
-
-	/*
-    switch (this->layer_param_.data_param().backend()) {
-    case DataParameter_DB_LEVELDB:
-      liter_->Next();
-      if (!liter_->Valid()) {
-        // We have reached the end. Restart from the first.
-        DLOG(INFO) << "Restarting data prefetching from start.";
-        liter_->SeekToFirst();
-      }
-      break;
-    case DataParameter_DB_LMDB:
-      if (mdb_cursor_get(lmdb_cursor_, &lmdb_key_,
-              &lmdb_value_, MDB_NEXT) != MDB_SUCCESS) {
-        // We have reached the end. Restart from the first.
-        DLOG(INFO) << "Restarting data prefetching from start.";
-        CHECK_EQ(mdb_cursor_get(lmdb_cursor_, &lmdb_key_,
-                &lmdb_value_, MDB_FIRST), MDB_SUCCESS);
-      }
-      break;
-    default:
-      LOG(FATAL) << "Unknown database backend";
-    }
-    */
-  }
+}
 }
 
 template <typename Dtype>
 void DataLayer<Dtype>::reshapeData(Blob<Dtype>& lprefetch_data_ , Blob<Dtype>& lprefetch_label_) {
-  int crop_size = this->layer_param_.transform_param().crop_size();
-//  LOG(INFO) << "Crop Size: "<<crop_size;
-  if (crop_size > 0) {
-    lprefetch_data_.Reshape(this->layer_param_.data_param().batch_size(),
-        this->datum_channels_, crop_size, crop_size);
-  } else {
-//    LOG(INFO)<<this->type()<<" "<<this->layer_param_.data_param().batch_size()<<" "<<this->datum_channels_<<" "<<this->datum_height_<<" "<<this->datum_width_;
-    lprefetch_data_.Reshape(this->layer_param_.data_param().batch_size(),
-         this->datum_channels_, this->datum_height_, this->datum_width_);
-  }
-  if (this->output_labels_) {
-    lprefetch_label_.Reshape(this->layer_param_.data_param().batch_size(),
-        1, 1, 1);
-  }
-}
+        int crop_size = this->layer_param_.transform_param().crop_size();
+        if (crop_size > 0) {
+        lprefetch_data_.Reshape(this->layer_param_.data_param().batch_size(),this->datum_channels_, crop_size, crop_size);
+                  } else {
+            lprefetch_data_.Reshape(this->layer_param_.data_param().batch_size(),this->datum_channels_, this->datum_height_, this->datum_width_);
+                  }
+        if (this->output_labels_) {
+              lprefetch_label_.Reshape(this->layer_param_.data_param().batch_size(),1, 1, 1);
+                                                }
+           }
 
-template <typename Dtype>
-void DataLayer<Dtype>::getLeveldbIter(shared_ptr<leveldb::Iterator>& liter_){
-        liter_.reset(db_->NewIterator(leveldb::ReadOptions()));
-        if (this->layer_param_.data_param().rand_skip()){
-DBGPRT(LOG(INFO)<<"Skip ");
-                        liter_->Seek(iter_->key());//TODO need test
-        }
-}
-
-template <typename Dtype>
-void DataLayer<Dtype>::getMdbCursor(MDB_cursor** cursor){
-                CHECK_EQ(mdb_cursor_open(mdb_txn_, mdb_dbi_, cursor), MDB_SUCCESS)
-      << "mdb_cursor_open failed";
-        if (this->layer_param_.data_param().rand_skip()){
-                CHECK_EQ(mdb_cursor_get(*cursor, &mdb_key_,
-                &mdb_value_, MDB_SET), MDB_SUCCESS);//TODO need test
-        }
-}
 template <typename Dtype>
 bool DataLayer<Dtype>::getOutputLabel(){
         return this->output_labels_;
 }
+
 
 
 INSTANTIATE_CLASS(DataLayer);

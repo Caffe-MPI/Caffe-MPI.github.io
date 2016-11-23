@@ -62,7 +62,6 @@ void InternalThread::StopInternalThread() {
     }
   }
 }
-
 bool InternalThread::WaitForInternalThreadToExit() {
   if (is_started()) {
      thread_->interrupt();

@@ -8,6 +8,7 @@
 #include "caffe/solver_factory.hpp"
 #include "caffe/bloblite.hpp"
 
+
 namespace caffe {
 
 /**
@@ -41,7 +42,7 @@ typedef boost::function<SolverAction::Enum()> ActionCallback;
 template <typename Dtype>
 class Solver {
  public:
- 	Dtype GetLearningRate(); //ZhuHui20151105
+  Dtype GetLearningRate(); 
   explicit Solver(const SolverParameter& param,
       const Solver* root_solver = NULL);
   explicit Solver(const string& param_file, const Solver* root_solver = NULL);
@@ -63,7 +64,12 @@ class Solver {
   // RestoreSolverStateFrom___ protected methods. You should implement these
   // methods to restore the state from the appropriate snapshot type.
   void Restore(const char* resume_file);
-  virtual ~Solver();
+  // The Solver::Snapshot function implements the basic snapshotting utility
+  // that stores the learned net. You should implement the SnapshotSolverState()
+  // function that produces a SolverState protocol buffer that needs to be
+  // written to disk together with the learned net.
+  void Snapshot();
+  virtual ~Solver() ;
   inline const SolverParameter& param() const { return param_; }
   inline shared_ptr<Net<Dtype> > net() { return net_; }
   inline const vector<shared_ptr<Net<Dtype> > >& test_nets() {
@@ -94,11 +100,6 @@ class Solver {
  protected:
   // Make and apply the update value for the current iteration.
   virtual void ApplyUpdate() = 0;
-  // The Solver::Snapshot function implements the basic snapshotting utility
-  // that stores the learned net. You should implement the SnapshotSolverState()
-  // function that produces a SolverState protocol buffer that needs to be
-  // written to disk together with the learned net.
-  void Snapshot();
   string SnapshotFilename(const string extension);
   string SnapshotToBinaryProto();
   string SnapshotToHDF5();
@@ -108,21 +109,16 @@ class Solver {
   virtual void SnapshotSolverState(const string& model_filename) = 0;
   virtual void RestoreSolverStateFromHDF5(const string& state_file) = 0;
   virtual void RestoreSolverStateFromBinaryProto(const string& state_file) = 0;
-  //For MPI
-  //Added by ZhuHui 20151030
+  void DisplayOutputBlobs(const int net_id);
+  void UpdateSmoothedLoss(Dtype loss, int start_iter, int average_loss);
+  
   public:
   virtual void ComputeValueServer();
   virtual void ComputeValueClient(int tid);
   protected:
   void ComputeUpdateValue() ;
   virtual void ComputeUpdateValueClient() ;
-  //virtual void ComputeUpdateValueServerThread() ;
-  //virtual void ComputeUpdateValueServerThreadGPU() ;
   virtual void ComputeUpdateValueClientThread(int& mpi_source,int tid,int tid22) ;
-  protected:
-  
-
-  void DisplayOutputBlobs(const int net_id);
 
   SolverParameter param_;
   int iter_;
@@ -130,6 +126,8 @@ class Solver {
   shared_ptr<Net<Dtype> > net_;
   vector<shared_ptr<Net<Dtype> > > test_nets_;
   vector<Callback*> callbacks_;
+  vector<Dtype> losses_;
+  Dtype smoothed_loss_;
 
   // The root solver that holds root nets (actually containing shared layers)
   // in data parallelism
@@ -141,18 +139,13 @@ class Solver {
 
   // True iff a request to stop early was received.
   bool requested_early_exit_;
-
-  DISABLE_COPY_AND_ASSIGN(Solver);
-  int mpi_source;
   int rank;
   int childProcessSum;
-  //void * tempDiff;
-  //void * tempDiffGPU;
   Bloblite<Dtype> *** tempdata;
   int* flagComputeEndNeedUpdate;
- 
-  vector<shared_ptr<Blob<Dtype> > > history_, update_, temp_; //ZhuHui20151105
-  void GetValue(int &mpi_source,const int tid,int tid22);//ZhuHui20151105
+  vector<shared_ptr<Blob<Dtype> > > history_, update_, temp_; 
+  void GetValue(int &mpi_source,const int tid,int tid22);
+  DISABLE_COPY_AND_ASSIGN(Solver);
 };
 
 /**
@@ -177,34 +170,7 @@ class WorkerSolver : public Solver<Dtype> {
   void RestoreSolverStateFromHDF5(const string& state_file) {
     LOG(FATAL) << "Should not be called on worker solver.";
   }
-  //for MPI
-  //added by ZhuHui20151104
-  /*
-  void ComputeUpdateValue();
-  void ComputeUpdateValueClient();
-  void ComputeUpdateValueServerThread() ;
-  void ComputeUpdateValueServerThreadGPU();
-  void ComputeUpdateValueClientThread(int& mpi_source,int tid);
-  */
 };
-/*
-template <typename Dtype>
-Solver<Dtype>* GetSolver(const SolverParameter& param) {
-  SolverParameter_SolverType type = param.solver_type();
-
-  switch (type) {
-  case SolverParameter_SolverType_SGD:
-      return new SGDSolver<Dtype>(param);
-  case SolverParameter_SolverType_NESTEROV:
-      return new NesterovSolver<Dtype>(param);
-  case SolverParameter_SolverType_ADAGRAD:
-      return new AdaGradSolver<Dtype>(param);
-  default:
-      LOG(FATAL) << "Unknown SolverType: " << type;
-  }
-  return (Solver<Dtype>*) NULL;
-}
-*/
 
 }  // namespace caffe
 

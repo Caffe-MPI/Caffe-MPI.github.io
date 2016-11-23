@@ -1,9 +1,7 @@
 #ifdef USE_CUDNN
-#include <algorithm>
 #include <vector>
 
-#include "caffe/layer.hpp"
-#include "caffe/vision_layers.hpp"
+#include "caffe/layers/cudnn_relu_layer.hpp"
 
 namespace caffe {
 
@@ -12,10 +10,15 @@ void CuDNNReLULayer<Dtype>::LayerSetUp(const vector<Blob<Dtype>*>& bottom,
       const vector<Blob<Dtype>*>& top) {
   ReLULayer<Dtype>::LayerSetUp(bottom, top);
   // initialize cuDNN
+  // @Ross
   CUDNN_CHECK(cudnnCreate(&handle_));
   cudnn::createTensor4dDesc<Dtype>(&bottom_desc_);
   cudnn::createTensor4dDesc<Dtype>(&top_desc_);
   handles_setup_ = true;
+  // @Ross
+  cudnnCreateActivationDescriptor(&activ_desc_);
+  cudnnSetActivationDescriptor(activ_desc_, CUDNN_ACTIVATION_RELU,
+  								CUDNN_PROPAGATE_NAN, 0.0);
 }
 
 template <typename Dtype>
@@ -37,7 +40,9 @@ CuDNNReLULayer<Dtype>::~CuDNNReLULayer() {
 
   cudnnDestroyTensorDescriptor(this->bottom_desc_);
   cudnnDestroyTensorDescriptor(this->top_desc_);
+  // @Ross
   cudnnDestroy(this->handle_);
+  cudnnDestroyActivationDescriptor(this->activ_desc_);
 }
 
 INSTANTIATE_CLASS(CuDNNReLULayer);

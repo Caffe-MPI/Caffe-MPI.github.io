@@ -36,7 +36,7 @@ class DataTransformer {
    *    set_cpu_data() is used. See data_layer.cpp for an example.
    */
   void Transform(const Datum& datum, Blob<Dtype>* transformed_blob);
-
+  void Transform(const Datum& datum, Dtype* transformed_data);
   /**
    * @brief Applies the transformation defined in the data layer's
    * transform_param block to a vector of Datum.
@@ -49,13 +49,7 @@ class DataTransformer {
    */
   void Transform(const vector<Datum> & datum_vector,
                 Blob<Dtype>* transformed_blob);
-	
-	//moved from protected
-	//by ZhuHui20151104
-	void Transform(const Datum& datum, Dtype* transformed_data);
-
-	//added by zhuhui 20151216
-	void Transform(const int batch_item_id, const Datum& datum,
+  void Transform(const int batch_item_id, const Datum& datum,
                  const Dtype* mean, Dtype* transformed_data);
 #ifdef USE_OPENCV
   /**
@@ -145,12 +139,7 @@ class DataTransformer {
    */
   virtual int Rand(int n);
 
-	//moved to public 
-	//by ZhuHui20151104
-  //void Transform(const Datum& datum, Dtype* transformed_data);
-  
-  
-  
+//  void Transform(const Datum& datum, Dtype* transformed_data);
   // Tranformation parameters
   TransformationParameter param_;
 

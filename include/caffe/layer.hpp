@@ -9,9 +9,7 @@
 #include "caffe/common.hpp"
 #include "caffe/layer_factory.hpp"
 #include "caffe/proto/caffe.pb.h"
-#include "caffe/util/device_alternate.hpp"
-#include "leveldb/db.h"
-#include "lmdb.h"
+#include "caffe/util/math_functions.hpp"
 #include "caffe/util/db.hpp"
 
 /**
@@ -153,9 +151,7 @@ class Layer {
    */
   inline Dtype Forward(const vector<Blob<Dtype>*>& bottom,
       const vector<Blob<Dtype>*>& top);
-
-//added by zhuhui 20151207
-  int taskiter;
+int taskiter;
   inline Dtype ForwardTest(const vector<Blob<Dtype>*>& bottom,
      const vector<Blob<Dtype>*>& top);
   virtual void Forward_cpu_test(const vector<Blob<Dtype>*>& bottom,
@@ -164,6 +160,7 @@ class Layer {
       const vector<Blob<Dtype>*>& top) {
    return Forward_cpu_test(bottom, top);
   }
+
 
   /**
    * @brief Given the top blob error gradients, compute the bottom blob error
@@ -329,14 +326,11 @@ class Layer {
     }
     param_propagate_down_[param_id] = value;
   }
-	virtual void reshapeData(Blob<Dtype>& lprefetch_data_ , Blob<Dtype>& lprefetch_label_){;}
+ virtual void reshapeData(Blob<Dtype>& lprefetch_data_ , Blob<Dtype>& lprefetch_label_){;}
 
-virtual void ReadData(shared_ptr<db::Cursor>& cursor,
-                     Blob<Dtype>& lprefetch_data_, Blob<Dtype>& lprefetch_label_){;}
-	virtual void getLeveldbIter(shared_ptr<leveldb::Iterator>& iter_){;}
-  virtual void getMdbCursor(MDB_cursor** cursor){;}
-  virtual bool getOutputLabel(){return false;}
+ virtual void ReadData(shared_ptr<db::Cursor>& cursor, Blob<Dtype>& lprefetch_data_, Blob<Dtype>& lprefetch_label_){;}
 
+ virtual bool getOutputLabel(){return false;} 
  protected:
   /** The protobuf that stores the layer parameters */
   LayerParameter layer_param_;
@@ -460,11 +454,9 @@ virtual void ReadData(shared_ptr<db::Cursor>& cursor,
   void Lock();
   /** Unlock forward_mutex_ if this layer is shared */
   void Unlock();
-
  public:
   Blob<Dtype> transformed_data_;
   Blob<Dtype> transformed_label_;
- 
 
   DISABLE_COPY_AND_ASSIGN(Layer);
 };  // class Layer
@@ -479,7 +471,6 @@ inline Dtype Layer<Dtype>::Forward(const vector<Blob<Dtype>*>& bottom,
   Lock();
   Dtype loss = 0;
   Reshape(bottom, top);
-  //LOG(INFO)<<"Caffe::mode="<<Caffe::mode();
   switch (Caffe::mode()) {
   case Caffe::CPU:
     Forward_cpu(bottom, top);
@@ -509,7 +500,6 @@ inline Dtype Layer<Dtype>::Forward(const vector<Blob<Dtype>*>& bottom,
     LOG(FATAL) << "Unknown caffe mode.";
   }
   Unlock();
-//LOG(INFO)<<top[0]->mutable_cpu_data()[0];
   return loss;
 }
 
@@ -540,7 +530,6 @@ void Layer<Dtype>::ToProto(LayerParameter* param, bool write_diff) {
   }
 }
 
-//added by zhuhui 20151207
 template <typename Dtype>
 inline Dtype Layer<Dtype>::ForwardTest(const vector<Blob<Dtype>*>& bottom,
     const vector<Blob<Dtype>*>& top) {
@@ -575,7 +564,6 @@ inline Dtype Layer<Dtype>::ForwardTest(const vector<Blob<Dtype>*>& bottom,
   }
   return loss;
 }
-
 
 
 }  // namespace caffe
