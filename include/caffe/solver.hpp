@@ -3,11 +3,9 @@
 #include <boost/function.hpp>
 #include <string>
 #include <vector>
-
 #include "caffe/net.hpp"
 #include "caffe/solver_factory.hpp"
-#include "caffe/bloblite.hpp"
-
+#include "caffe/util/benchmark.hpp"
 
 namespace caffe {
 
@@ -42,7 +40,6 @@ typedef boost::function<SolverAction::Enum()> ActionCallback;
 template <typename Dtype>
 class Solver {
  public:
-  Dtype GetLearningRate(); 
   explicit Solver(const SolverParameter& param,
       const Solver* root_solver = NULL);
   explicit Solver(const string& param_file, const Solver* root_solver = NULL);
@@ -69,7 +66,7 @@ class Solver {
   // function that produces a SolverState protocol buffer that needs to be
   // written to disk together with the learned net.
   void Snapshot();
-  virtual ~Solver() ;
+  virtual ~Solver() {}
   inline const SolverParameter& param() const { return param_; }
   inline shared_ptr<Net<Dtype> > net() { return net_; }
   inline const vector<shared_ptr<Net<Dtype> > >& test_nets() {
@@ -79,9 +76,26 @@ class Solver {
 
   // Invoked at specific points during an iteration
   class Callback {
+   public:
+    virtual void allreduce(int param_id) = 0;
+    virtual void syncCommStream() = 0;
+
+    virtual void allreduce_nccl_mpi(int param_id,
+                    ncclComm_t nccl_comm,
+                    cudaStream_t comm_stream,
+                    bool root_solver) = 0;
+
+#ifndef CPU_ONLY
+#ifdef USE_NCCL
+    virtual ncclComm_t getNCCLComm() = 0;
+#endif
+    virtual cudaStream_t getCommStream() = 0;
+#endif
+
    protected:
     virtual void on_start() = 0;
-    virtual void on_gradients_ready() = 0;
+    virtual void allreduce() = 0;
+    virtual void soft_barrier() = 0;
 
     template <typename T>
     friend class Solver;
@@ -111,14 +125,6 @@ class Solver {
   virtual void RestoreSolverStateFromBinaryProto(const string& state_file) = 0;
   void DisplayOutputBlobs(const int net_id);
   void UpdateSmoothedLoss(Dtype loss, int start_iter, int average_loss);
-  
-  public:
-  virtual void ComputeValueServer();
-  virtual void ComputeValueClient(int tid);
-  protected:
-  void ComputeUpdateValue() ;
-  virtual void ComputeUpdateValueClient() ;
-  virtual void ComputeUpdateValueClientThread(int& mpi_source,int tid,int tid22) ;
 
   SolverParameter param_;
   int iter_;
@@ -139,12 +145,11 @@ class Solver {
 
   // True iff a request to stop early was received.
   bool requested_early_exit_;
-  int rank;
-  int childProcessSum;
-  Bloblite<Dtype> *** tempdata;
-  int* flagComputeEndNeedUpdate;
-  vector<shared_ptr<Blob<Dtype> > > history_, update_, temp_; 
-  void GetValue(int &mpi_source,const int tid,int tid22);
+
+  // Timing information
+  Timer iteration_timer_;
+  float iterations_last_;
+
   DISABLE_COPY_AND_ASSIGN(Solver);
 };
 

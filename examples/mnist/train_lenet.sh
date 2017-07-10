@@ -1,4 +1,4 @@
 #!/usr/bin/env sh
-set -e
 
-./build/tools/caffe train --solver=examples/mnist/lenet_solver.prototxt $@
+#./build/tools/caffe train --solver=examples/mnist/lenet_solver.prototxt --gpu=0 2>&1 |tee log
+cuda-gdb ./build/tools/caffe

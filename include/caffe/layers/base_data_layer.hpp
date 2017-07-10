@@ -38,29 +38,22 @@ class BaseDataLayer : public Layer<Dtype> {
       const vector<bool>& propagate_down, const vector<Blob<Dtype>*>& bottom) {}
   virtual void Backward_gpu(const vector<Blob<Dtype>*>& top,
       const vector<bool>& propagate_down, const vector<Blob<Dtype>*>& bottom) {}
-  int datum_channels() const { return datum_channels_; }
-  int datum_height() const { return datum_height_; }
-  int datum_width() const { return datum_width_; }
-  int datum_size() const { return datum_size_; }
-  
+
  protected:
   TransformationParameter transform_param_;
   shared_ptr<DataTransformer<Dtype> > data_transformer_;
   bool output_labels_;
-  int datum_channels_;
-  int datum_height_;
-  int datum_width_;
-  int datum_size_;
-  Blob<Dtype> data_mean_;
-  const Dtype* mean_;
-  Phase phase_;
-  int rank;
 };
 
 template <typename Dtype>
 class Batch {
  public:
   Blob<Dtype> data_, label_;
+#ifndef CPU_ONLY
+  cudaEvent_t copied_;
+#endif
+  // stored random numbers for this batch
+  Blob<int> random_vec_;
 };
 
 template <typename Dtype>
@@ -78,15 +71,9 @@ class BasePrefetchingDataLayer :
       const vector<Blob<Dtype>*>& top);
   virtual void Forward_gpu(const vector<Blob<Dtype>*>& bottom,
       const vector<Blob<Dtype>*>& top);
-virtual void Forward_cpu_test(const vector<Blob<Dtype>*>& bottom,
-      const vector<Blob<Dtype>*>& top);
-  virtual void Forward_gpu_test(const vector<Blob<Dtype>*>& bottom,
-      const vector<Blob<Dtype>*>& top);
 
   // Prefetches batches (asynchronously if to GPU memory)
   static const int PREFETCH_COUNT = 3;
-virtual void CreatePrefetchThread();
-  virtual void JoinPrefetchThread();
 
  protected:
   virtual void InternalThreadEntry();
@@ -97,10 +84,6 @@ virtual void CreatePrefetchThread();
   BlockingQueue<Batch<Dtype>*> prefetch_full_;
 
   Blob<Dtype> transformed_data_;
-  Blob<Dtype> prefetch_data_;
-  Blob<Dtype> prefetch_label_;
-
-  int rank;
 };
 
 }  // namespace caffe

@@ -1,11 +1,13 @@
 #ifndef CAFFE_DATA_TRANSFORMER_HPP
 #define CAFFE_DATA_TRANSFORMER_HPP
 
+#include <string>
 #include <vector>
 
 #include "caffe/blob.hpp"
 #include "caffe/common.hpp"
 #include "caffe/proto/caffe.pb.h"
+#include "caffe/util/blocking_queue.hpp"
 
 namespace caffe {
 
@@ -26,6 +28,26 @@ class DataTransformer {
   void InitRand();
 
   /**
+   * @brief Generates a random integer from Uniform({0, 1, ..., n-1}).
+   *
+   * @param n
+   *    The upperbound (exclusive) value of the random number.
+   * @return
+   *    A uniformly random integer value from ({0, 1, ..., n-1}).
+   */
+  virtual int Rand(int n);
+
+#ifndef CPU_ONLY
+  void TransformGPU(int N, int C, int H, int W,
+              const Dtype *in, Dtype *out, int *);
+#endif
+  void Copy(const Datum& datum, Dtype *data);
+  void Copy(const cv::Mat& datum, Dtype *data);
+  void CopyPtrEntry(string* str, Dtype* transformed_ptr,
+                    bool output_labels, Dtype *label,
+                    BlockingQueue<string*>* free);
+
+  /**
    * @brief Applies the transformation defined in the data layer's
    * transform_param block to the data.
    *
@@ -36,7 +58,28 @@ class DataTransformer {
    *    set_cpu_data() is used. See data_layer.cpp for an example.
    */
   void Transform(const Datum& datum, Blob<Dtype>* transformed_blob);
-  void Transform(const Datum& datum, Dtype* transformed_data);
+
+  /**
+   * @brief Applies the transformation defined in the data layer's
+   * transform_param block to the data.
+   *
+   * @param datum
+   *    Datum containing the data to be transformed.
+   * @param rand1
+   *    Random value (0,RAND_MAX+1]
+   * @param rand2
+   *    Random value (0,RAND_MAX+1]
+   * @param rand3
+   *    Random value (0,RAND_MAX+1]
+   * @param transformed_blob
+   *    This is destination blob. It can be part of top blob's data if
+   *    set_cpu_data() is used. See data_layer.cpp for an example.
+   */
+    void TransformPtrEntry(string* str, Dtype* transformed_ptr,
+                           int rand1, int rand2, int rand3,
+                           bool output_labels, Dtype *label,
+                           BlockingQueue<string*>* free);
+
   /**
    * @brief Applies the transformation defined in the data layer's
    * transform_param block to a vector of Datum.
@@ -49,8 +92,7 @@ class DataTransformer {
    */
   void Transform(const vector<Datum> & datum_vector,
                 Blob<Dtype>* transformed_blob);
-  void Transform(const int batch_item_id, const Datum& datum,
-                 const Dtype* mean, Dtype* transformed_data);
+
 #ifdef USE_OPENCV
   /**
    * @brief Applies the transformation defined in the data layer's
@@ -76,6 +118,25 @@ class DataTransformer {
    *    set_cpu_data() is used. See image_data_layer.cpp for an example.
    */
   void Transform(const cv::Mat& cv_img, Blob<Dtype>* transformed_blob);
+
+  /**
+   * @brief Applies the transformation defined in the data layer's
+   * transform_param block to a cv::Mat
+   *
+   * @param cv_img
+   *    cv::Mat containing the data to be transformed.
+   * @param transformed_blob
+   *    This is destination blob. It can be part of top blob's data if
+   *    set_cpu_data() is used. See image_data_layer.cpp for an example.
+   * @param rand1
+   *    Random value (0,RAND_MAX+1]
+   * @param rand2
+   *    Random value (0,RAND_MAX+1]
+   * @param rand3
+   *    Random value (0,RAND_MAX+1]
+   */
+  void TransformPtr(const cv::Mat& cv_img, Dtype* transformed_ptr,
+                    int rand1, int rand2, int rand3);
 #endif  // USE_OPENCV
 
   /**
@@ -98,7 +159,7 @@ class DataTransformer {
    * @param datum
    *    Datum containing the data to be transformed.
    */
-  vector<int> InferBlobShape(const Datum& datum);
+  vector<int> InferBlobShape(const Datum& datum, bool use_gpu = false);
   /**
    * @brief Infers the shape of transformed_blob will have when
    *    the transformation is applied to the data.
@@ -125,29 +186,22 @@ class DataTransformer {
    * @param cv_img
    *    cv::Mat containing the data to be transformed.
    */
-  vector<int> InferBlobShape(const cv::Mat& cv_img);
+  vector<int> InferBlobShape(const cv::Mat& cv_img, bool use_gpu = false);
 #endif  // USE_OPENCV
 
  protected:
-   /**
-   * @brief Generates a random integer from Uniform({0, 1, ..., n-1}).
-   *
-   * @param n
-   *    The upperbound (exclusive) value of the random number.
-   * @return
-   *    A uniformly random integer value from ({0, 1, ..., n-1}).
-   */
-  virtual int Rand(int n);
-
-//  void Transform(const Datum& datum, Dtype* transformed_data);
+  void TransformGPU(const Datum& datum, Dtype* transformed_data);
+  void Transform(const Datum& datum, Dtype* transformed_data);
   // Tranformation parameters
   TransformationParameter param_;
-
+  void TransformPtrInt(Datum* datum, Dtype* transformed_data,
+                       int rand1, int rand2, int rand3);
 
   shared_ptr<Caffe::RNG> rng_;
   Phase phase_;
   Blob<Dtype> data_mean_;
   vector<Dtype> mean_values_;
+  Dtype *mean_values_gpu_ptr_;
 };
 
 }  // namespace caffe

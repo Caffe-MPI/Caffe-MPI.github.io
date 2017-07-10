@@ -34,10 +34,8 @@ class CuDNNSigmoidLayer : public SigmoidLayer<Dtype> {
       const vector<bool>& propagate_down, const vector<Blob<Dtype>*>& bottom);
 
   bool handles_setup_;
-  cudnnHandle_t             handle_;
   cudnnTensorDescriptor_t bottom_desc_;
   cudnnTensorDescriptor_t top_desc_;
-  // @Ross
   cudnnActivationDescriptor_t activ_desc_;
 };
 #endif

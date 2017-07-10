@@ -5,7 +5,7 @@ net: "examples/mnist/lenet_train_test.prototxt"
 # covering the full 10,000 testing images.
 test_iter: 100
 # Carry out testing every 500 training iterations.
-test_interval: 500
+test_interval: 100
 # The base learning rate, momentum and the weight decay of the network.
 base_lr: 0.01
 momentum: 0.9
@@ -17,7 +17,7 @@ power: 0.75
 # Display every 100 iterations
 display: 100
 # The maximum number of iterations
-max_iter: 10000
+max_iter: 2000
 # snapshot intermediate results
 snapshot: 5000
 snapshot_prefix: "examples/mnist/lenet"

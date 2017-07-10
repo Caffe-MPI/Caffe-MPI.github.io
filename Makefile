@@ -24,20 +24,22 @@ else
 	OTHER_BUILD_DIR := $(DEBUG_BUILD_DIR)
 endif
 
+THIRDPARTY_DIR := ./3rdparty
+
 # All of the directories containing code.
 SRC_DIRS := $(shell find * -type d -exec bash -c "find {} -maxdepth 1 \
 	\( -name '*.cpp' -o -name '*.proto' \) | grep -q ." \; -print)
 
 # The target shared library name
-LIBRARY_NAME := $(PROJECT)
+LIBRARY_NAME := $(PROJECT)$(LIBRARY_NAME_SUFFIX)
 LIB_BUILD_DIR := $(BUILD_DIR)/lib
 STATIC_NAME := $(LIB_BUILD_DIR)/lib$(LIBRARY_NAME).a
-DYNAMIC_VERSION_MAJOR 		:= 1
-DYNAMIC_VERSION_MINOR 		:= 0
-DYNAMIC_VERSION_REVISION 	:= 0-rc3
+DYNAMIC_VERSION_MAJOR 		:= 0
+DYNAMIC_VERSION_MINOR 		:= 15
+DYNAMIC_VERSION_REVISION 	:= 14
 DYNAMIC_NAME_SHORT := lib$(LIBRARY_NAME).so
-#DYNAMIC_SONAME_SHORT := $(DYNAMIC_NAME_SHORT).$(DYNAMIC_VERSION_MAJOR)
-DYNAMIC_VERSIONED_NAME_SHORT := $(DYNAMIC_NAME_SHORT).$(DYNAMIC_VERSION_MAJOR).$(DYNAMIC_VERSION_MINOR).$(DYNAMIC_VERSION_REVISION)
+DYNAMIC_SONAME_SHORT := $(DYNAMIC_NAME_SHORT).$(DYNAMIC_VERSION_MAJOR).$(DYNAMIC_VERSION_MINOR)
+DYNAMIC_VERSIONED_NAME_SHORT := $(DYNAMIC_SONAME_SHORT).$(DYNAMIC_VERSION_REVISION)
 DYNAMIC_NAME := $(LIB_BUILD_DIR)/$(DYNAMIC_VERSIONED_NAME_SHORT)
 COMMON_FLAGS += -DCAFFE_VERSION=$(DYNAMIC_VERSION_MAJOR).$(DYNAMIC_VERSION_MINOR).$(DYNAMIC_VERSION_REVISION)
 
@@ -171,7 +173,7 @@ ifneq ("$(wildcard $(CUDA_DIR)/lib64)","")
 endif
 CUDA_LIB_DIR += $(CUDA_DIR)/lib
 
-INCLUDE_DIRS += $(BUILD_INCLUDE_DIR) ./src ./include
+INCLUDE_DIRS += $(BUILD_INCLUDE_DIR) ./src ./include $(THIRDPARTY_DIR)
 ifneq ($(CPU_ONLY), 1)
 	INCLUDE_DIRS += $(CUDA_INCLUDE_DIR)
 	LIBRARY_DIRS += $(CUDA_LIB_DIR)
@@ -263,7 +265,7 @@ ifeq ($(LINUX), 1)
 	# boost::thread is reasonably called boost_thread (compare OS X)
 	# We will also explicitly add stdc++ to the link target.
 	LIBRARIES += boost_thread stdc++
-	VERSIONFLAGS += -Wl,-soname,$(DYNAMIC_VERSIONED_NAME_SHORT) -Wl,-rpath,$(ORIGIN)/../lib
+	VERSIONFLAGS += -Wl,-soname,$(DYNAMIC_SONAME_SHORT) -Wl,-rpath,$(ORIGIN)/../lib
 endif
 
 # OS X:
@@ -272,7 +274,7 @@ endif
 ifeq ($(OSX), 1)
 	CXX := /usr/bin/clang++
 	ifneq ($(CPU_ONLY), 1)
-		CUDA_VERSION := $(shell $(CUDA_DIR)/bin/nvcc -V | grep -o 'release [0-9.]*' | tr -d '[a-z ]')
+		CUDA_VERSION := $(shell $(CUDA_DIR)/bin/nvcc -V | grep -o 'release [0-9.]*' | grep -o '[0-9.]*')
 		ifeq ($(shell echo | awk '{exit $(CUDA_VERSION) < 7.0;}'), 1)
 			CXXFLAGS += -stdlib=libstdc++
 			LINKFLAGS += -stdlib=libstdc++
@@ -294,7 +296,7 @@ ifeq ($(OSX), 1)
 	LIBRARIES += boost_thread-mt
 	# we need to explicitly ask for the rpath to be obeyed
 	ORIGIN := @loader_path
-	VERSIONFLAGS += -Wl,-install_name,@rpath/$(DYNAMIC_VERSIONED_NAME_SHORT) -Wl,-rpath,$(ORIGIN)/../../build/lib
+	VERSIONFLAGS += -Wl,-install_name,$(DYNAMIC_SONAME_SHORT) -Wl,-rpath,$(ORIGIN)/../../build/lib
 else
 	ORIGIN := \$$ORIGIN
 endif
@@ -325,7 +327,15 @@ endif
 # cuDNN acceleration configuration.
 ifeq ($(USE_CUDNN), 1)
 	LIBRARIES += cudnn
+	INCLUDE_DIRS += $(CUDNN_DIR)/include
+	LIBRARY_DIRS += $(CUDNN_DIR)/install/cuda/lib64
 	COMMON_FLAGS += -DUSE_CUDNN
+endif
+
+# NCCL acceleration configuration
+ifeq ($(USE_NCCL), 1)
+	LIBRARIES += nccl
+	COMMON_FLAGS += -DUSE_NCCL
 endif
 
 # configure IO libraries
@@ -561,8 +571,9 @@ $(ALL_BUILD_DIRS): | $(BUILD_DIR_LINK)
 
 $(DYNAMIC_NAME): $(OBJS) | $(LIB_BUILD_DIR)
 	@ echo LD -o $@
-	$(Q)$(CXX) -shared -o $@ $(OBJS) $(VERSIONFLAGS) $(LINKFLAGS) $(LDFLAGS)
-	@ cd $(BUILD_DIR)/lib; rm -f $(DYNAMIC_NAME_SHORT);   ln -s $(DYNAMIC_VERSIONED_NAME_SHORT) $(DYNAMIC_NAME_SHORT)
+	$(Q)$(CXX) -shared -o $@ $(OBJS) $(VERSIONFLAGS) $(LINKFLAGS) $(LDFLAGS) $(DYNAMIC_FLAGS)
+	@ cd $(BUILD_DIR)/lib; rm -f $(DYNAMIC_SONAME_SHORT); ln -s $(DYNAMIC_VERSIONED_NAME_SHORT) $(DYNAMIC_SONAME_SHORT)
+	@ cd $(BUILD_DIR)/lib; rm -f $(DYNAMIC_NAME_SHORT);   ln -s $(DYNAMIC_SONAME_SHORT) $(DYNAMIC_NAME_SHORT)
 
 $(STATIC_NAME): $(OBJS) | $(LIB_BUILD_DIR)
 	@ echo AR -o $@
@@ -683,7 +694,8 @@ $(DISTRIBUTE_DIR): all py | $(DISTRIBUTE_SUBDIRS)
 	# add libraries
 	cp $(STATIC_NAME) $(DISTRIBUTE_DIR)/lib
 	install -m 644 $(DYNAMIC_NAME) $(DISTRIBUTE_DIR)/lib
-	cd $(DISTRIBUTE_DIR)/lib; rm -f $(DYNAMIC_NAME_SHORT);   ln -s $(DYNAMIC_VERSIONED_NAME_SHORT) $(DYNAMIC_NAME_SHORT)
+	cd $(DISTRIBUTE_DIR)/lib; rm -f $(DYNAMIC_SONAME_SHORT); ln -s $(DYNAMIC_VERSIONED_NAME_SHORT) $(DYNAMIC_SONAME_SHORT)
+	cd $(DISTRIBUTE_DIR)/lib; rm -f $(DYNAMIC_NAME_SHORT);   ln -s $(DYNAMIC_SONAME_SHORT) $(DYNAMIC_NAME_SHORT)
 	# add python - it's not the standard way, indeed...
 	cp -r python $(DISTRIBUTE_DIR)/python
 

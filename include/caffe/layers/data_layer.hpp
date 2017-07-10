@@ -11,6 +11,7 @@
 #include "caffe/layers/base_data_layer.hpp"
 #include "caffe/proto/caffe.pb.h"
 #include "caffe/util/db.hpp"
+#include "caffe/util/thread_pool.hpp"
 
 namespace caffe {
 
@@ -20,21 +21,19 @@ class DataLayer : public BasePrefetchingDataLayer<Dtype> {
   explicit DataLayer(const LayerParameter& param);
   virtual ~DataLayer();
   virtual void DataLayerSetUp(const vector<Blob<Dtype>*>& bottom,
-  const vector<Blob<Dtype>*>& top);
+      const vector<Blob<Dtype>*>& top);
   // DataLayer uses DataReader instead for sharing for parallelism
   virtual inline bool ShareInParallel() const { return false; }
   virtual inline const char* type() const { return "Data"; }
   virtual inline int ExactNumBottomBlobs() const { return 0; }
   virtual inline int MinTopBlobs() const { return 1; }
   virtual inline int MaxTopBlobs() const { return 2; }
-  void reshapeData(Blob<Dtype>& lprefetch_data_ , Blob<Dtype>& lprefetch_label_);
-  void ReadData(shared_ptr<db::Cursor>& cursor,Blob<Dtype>& lprefetch_data_, Blob<Dtype>& lprefetch_label_);
-  bool getOutputLabel();
 
  protected:
   virtual void load_batch(Batch<Dtype>* batch);
-	
+
   DataReader reader_;
+  shared_ptr<ThreadPool> pool_;
 };
 
 }  // namespace caffe

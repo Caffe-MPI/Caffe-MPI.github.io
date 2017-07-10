@@ -29,8 +29,6 @@ env:
 
 cache:
   apt: true
-  directories:
-    - ~/protobuf3
 
 before_install:
   - source ./scripts/travis/defaults.sh

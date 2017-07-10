@@ -2,9 +2,10 @@
 #define CAFFE_UTIL_DB_HPP
 
 #include <string>
-
+#include "lmdb.h"
 #include "caffe/common.hpp"
 #include "caffe/proto/caffe.pb.h"
+//#include "caffe/inspur.h"
 
 namespace caffe { namespace db {
 
@@ -16,6 +17,10 @@ class Cursor {
   virtual ~Cursor() { }
   virtual void SeekToFirst() = 0;
   virtual void Next() = 0;
+//  virtual void Last()=0;
+//  virtual void Set(MDB_val *key)=0;
+//  virtual size_t Kkey()=0;
+//  virtual void *KKkey()=0;
   virtual string key() = 0;
   virtual string value() = 0;
   virtual bool valid() = 0;

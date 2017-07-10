@@ -28,6 +28,8 @@ void ImageDataLayer<Dtype>::DataLayerSetUp(const vector<Blob<Dtype>*>& bottom,
   const int new_height = this->layer_param_.image_data_param().new_height();
   const int new_width  = this->layer_param_.image_data_param().new_width();
   const bool is_color  = this->layer_param_.image_data_param().is_color();
+  bool use_gpu_transform = this->transform_param_.use_gpu_transform() &&
+      (Caffe::mode() == Caffe::GPU);
   string root_folder = this->layer_param_.image_data_param().root_folder();
 
   CHECK((new_height == 0 && new_width == 0) ||
@@ -37,16 +39,11 @@ void ImageDataLayer<Dtype>::DataLayerSetUp(const vector<Blob<Dtype>*>& bottom,
   const string& source = this->layer_param_.image_data_param().source();
   LOG(INFO) << "Opening file " << source;
   std::ifstream infile(source.c_str());
-  string line;
-  size_t pos;
+  string filename;
   int label;
-  while (std::getline(infile, line)) {
-    pos = line.find_last_of(' ');
-    label = atoi(line.substr(pos + 1).c_str());
-    lines_.push_back(std::make_pair(line.substr(0, pos), label));
+  while (infile >> filename >> label) {
+    lines_.push_back(std::make_pair(filename, label));
   }
-
-  CHECK(!lines_.empty()) << "File is empty";
 
   if (this->layer_param_.image_data_param().shuffle()) {
     // randomly shuffle data
@@ -71,7 +68,8 @@ void ImageDataLayer<Dtype>::DataLayerSetUp(const vector<Blob<Dtype>*>& bottom,
                                     new_height, new_width, is_color);
   CHECK(cv_img.data) << "Could not load " << lines_[lines_id_].first;
   // Use data_transformer to infer the expected blob shape from a cv_image.
-  vector<int> top_shape = this->data_transformer_->InferBlobShape(cv_img);
+  vector<int> top_shape = this->data_transformer_->InferBlobShape(cv_img,
+                          use_gpu_transform);
   this->transformed_data_.Reshape(top_shape);
   // Reshape prefetch_data and top[0] according to the batch_size.
   const int batch_size = this->layer_param_.image_data_param().batch_size();
@@ -110,6 +108,8 @@ void ImageDataLayer<Dtype>::load_batch(Batch<Dtype>* batch) {
   CPUTimer timer;
   CHECK(batch->data_.count());
   CHECK(this->transformed_data_.count());
+  bool use_gpu_transform = this->transform_param_.use_gpu_transform() &&
+                           (Caffe::mode() == Caffe::GPU);
   ImageDataParameter image_data_param = this->layer_param_.image_data_param();
   const int batch_size = image_data_param.batch_size();
   const int new_height = image_data_param.new_height();
@@ -117,13 +117,20 @@ void ImageDataLayer<Dtype>::load_batch(Batch<Dtype>* batch) {
   const bool is_color = image_data_param.is_color();
   string root_folder = image_data_param.root_folder();
 
+  if (use_gpu_transform) {
+      vector<int> random_vec_shape_;
+      random_vec_shape_.push_back(batch_size * 3);
+      batch->random_vec_.Reshape(random_vec_shape_);
+  }
+
   // Reshape according to the first image of each batch
   // on single input batches allows for inputs of varying dimension.
   cv::Mat cv_img = ReadImageToCVMat(root_folder + lines_[lines_id_].first,
       new_height, new_width, is_color);
   CHECK(cv_img.data) << "Could not load " << lines_[lines_id_].first;
   // Use data_transformer to infer the expected blob shape from a cv_img.
-  vector<int> top_shape = this->data_transformer_->InferBlobShape(cv_img);
+  vector<int> top_shape = this->data_transformer_->InferBlobShape(cv_img,
+                                use_gpu_transform);
   this->transformed_data_.Reshape(top_shape);
   // Reshape batch according to the batch_size.
   top_shape[0] = batch_size;
@@ -146,6 +153,7 @@ void ImageDataLayer<Dtype>::load_batch(Batch<Dtype>* batch) {
     // Apply transformations (mirror, crop...) to the image
     int offset = batch->data_.offset(item_id);
     this->transformed_data_.set_cpu_data(prefetch_data + offset);
+
     this->data_transformer_->Transform(cv_img, &(this->transformed_data_));
     trans_time += timer.MicroSeconds();
 

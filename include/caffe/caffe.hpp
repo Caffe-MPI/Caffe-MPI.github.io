@@ -17,5 +17,6 @@
 #include "caffe/util/benchmark.hpp"
 #include "caffe/util/io.hpp"
 #include "caffe/util/upgrade_proto.hpp"
-
+//#include "caffe/inspur.h"
 #endif  // CAFFE_CAFFE_HPP_
+int total_gpus;

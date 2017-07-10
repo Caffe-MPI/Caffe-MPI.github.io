@@ -4,8 +4,7 @@
 #include <boost/shared_ptr.hpp>
 #include <gflags/gflags.h>
 #include <glog/logging.h>
-#include <mpi.h>
-
+//#include "caffe/inspur.h"
 #include <climits>
 #include <cmath>
 #include <fstream>  // NOLINT(readability/streams)
@@ -16,24 +15,7 @@
 #include <string>
 #include <utility>  // pair
 #include <vector>
-/////TAG define/////////////
-#define TAG_DATA_OUT    (1)
-#define TAG_DATA_OUT_IF (2)
-#define TAG_ITER        (3)
-#define TAG_UPDATE      (4)
-#define TAG_UPDATE_IF   (5)
-#define TAG_NET_OUT     (6)
-#define TAG_UPDATE_1    (7)
-//////////////////////////////
-#define DIRECTGPU
 
-#ifdef TDEBUG
-#define DBGPRT(str) str
-#else
-#define DBGPRT(str)
-#endif
-
-//
 #include "caffe/util/device_alternate.hpp"
 
 // Convert macro to string
@@ -154,6 +136,9 @@ class Caffe {
   inline static curandGenerator_t curand_generator() {
     return Get().curand_generator_;
   }
+#ifdef USE_CUDNN
+  inline static cudnnHandle_t cudnn_handle() { return Get().cudnn_handle_; }
+#endif
 #endif
 
   // Returns the mode: running on CPU or GPU.
@@ -182,12 +167,13 @@ class Caffe {
   inline static bool root_solver() { return Get().root_solver_; }
   inline static void set_root_solver(bool val) { Get().root_solver_ = val; }
 
- static int GetDeviceNum();
-
  protected:
 #ifndef CPU_ONLY
   cublasHandle_t cublas_handle_;
   curandGenerator_t curand_generator_;
+#ifdef USE_CUDNN
+  cudnnHandle_t cudnn_handle_;
+#endif
 #endif
   shared_ptr<RNG> random_generator_;
 
@@ -205,3 +191,4 @@ class Caffe {
 }  // namespace caffe
 
 #endif  // CAFFE_COMMON_HPP_
+

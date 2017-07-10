@@ -3,16 +3,24 @@
 #endif
 #include <glog/logging.h>
 #include <stdio.h>
-
+#include "mpi.h"
 #include <sstream>
 #include <string>
 #include <vector>
 
 #include "boost/thread.hpp"
+#include "boost/thread/latch.hpp"
 #include "caffe/caffe.hpp"
 #include "caffe/parallel.hpp"
-
+#include "caffe/util/gpu_memory.hpp"
+#ifdef USE_NCCL
+#include "caffe/util/nccl.hpp"
+#endif
+#include "caffe/mpi.hpp"
+#include <sys/time.h>
 namespace caffe {
+
+shared_ptr<boost::barrier> bar;
 
 enum Op {
   copy,
@@ -69,8 +77,8 @@ static size_t total_size(const vector<Blob<Dtype>*>& params) {
 template<typename Dtype>
 Params<Dtype>::Params(shared_ptr<Solver<Dtype> > root_solver)
     : size_(total_size<Dtype>(root_solver->net()->learnable_params())),
-      data_(),
-      diff_() {
+      data_(NULL),
+      diff_(NULL) {
 }
 
 template<typename Dtype>
@@ -82,16 +90,34 @@ GPUParams<Dtype>::GPUParams(shared_ptr<Solver<Dtype> > root_solver, int device)
 
   // Allocate device buffers
   CUDA_CHECK(cudaSetDevice(device));
-  CUDA_CHECK(cudaMalloc(&data_, size_ * sizeof(Dtype)));
+  buffer_device_ = device;
+  stream_ = GPUMemory::device_stream(buffer_device_);
+  GPUMemory::allocate(reinterpret_cast<void **>(&data_),
+      size_ * sizeof(Dtype), device, stream_);
+ 
 
   // Copy blob values
   const vector<Blob<Dtype>*>& net =
       root_solver->net()->learnable_params();
   apply_buffers(net, data_, size_, copy);
 
-  CUDA_CHECK(cudaMalloc(&diff_, size_ * sizeof(Dtype)));
+  GPUMemory::allocate(reinterpret_cast<void **>(&diff_),
+      size_ * sizeof(Dtype), device, stream_);
   caffe_gpu_set(size_, Dtype(0), diff_);
+//*diff_1;
 
+//GPUMemory::allocate(&diff_1,size_*sizeof(Dtype), device, stream_);
+const vector<shared_ptr<Blob<Dtype> > >& params = root_solver->net()->params();
+int num_net=params.size();
+int count_param=0;
+for (int i=0;i<num_net;i++)
+        {
+if (params[i]->count()>count_param)count_param=params[i]->count();
+                                     }
+   
+ GPUMemory::allocate(&diff_1,count_param*sizeof(Dtype), device, stream_);    
+diff_2=(Dtype*)malloc(count_param*sizeof(Dtype));
+diff_3=(Dtype*)malloc(count_param*sizeof(Dtype));
   CUDA_CHECK(cudaSetDevice(initial_device));
 #else
   NO_GPU;
@@ -101,9 +127,11 @@ GPUParams<Dtype>::GPUParams(shared_ptr<Solver<Dtype> > root_solver, int device)
 template<typename Dtype>
 GPUParams<Dtype>::~GPUParams() {
 #ifndef CPU_ONLY
-  CUDA_CHECK(cudaFree(data_));
-  CUDA_CHECK(cudaFree(diff_));
+  GPUMemory::deallocate(data_, buffer_device_, stream_);
+  GPUMemory::deallocate(diff_, buffer_device_, stream_);
+  GPUMemory::deallocate(diff_1, buffer_device_, stream_);
 #endif
+  free(diff_2);free(diff_3);
 }
 
 template<typename Dtype>
@@ -116,80 +144,9 @@ void GPUParams<Dtype>::configure(Solver<Dtype>* solver) const {
 
 void DevicePair::compute(const vector<int> devices, vector<DevicePair>* pairs) {
 #ifndef CPU_ONLY
-  vector<int> remaining(devices);
-
-  // Depth for reduction tree
-  int remaining_depth = static_cast<int>(ceil(log2(remaining.size())));
-
-  // Group GPUs by board
-  for (int d = 0; d < remaining_depth; ++d) {
-    for (int i = 0; i < remaining.size(); ++i) {
-      for (int j = i + 1; j < remaining.size(); ++j) {
-        cudaDeviceProp a, b;
-        CUDA_CHECK(cudaGetDeviceProperties(&a, remaining[i]));
-        CUDA_CHECK(cudaGetDeviceProperties(&b, remaining[j]));
-        if (a.isMultiGpuBoard && b.isMultiGpuBoard) {
-          if (a.multiGpuBoardGroupID == b.multiGpuBoardGroupID) {
-            pairs->push_back(DevicePair(remaining[i], remaining[j]));
-            DLOG(INFO) << "GPU board: " << remaining[i] << ":" << remaining[j];
-            remaining.erase(remaining.begin() + j);
-            break;
-          }
-        }
-      }
-    }
-  }
-  ostringstream s;
-  for (int i = 0; i < remaining.size(); ++i) {
-    s << (i ? ", " : "") << remaining[i];
-  }
-  DLOG(INFO) << "GPUs paired by boards, remaining: " << s.str();
-
-  // Group by P2P accessibility
-  remaining_depth = ceil(log2(remaining.size()));
-  for (int d = 0; d < remaining_depth; ++d) {
-    for (int i = 0; i < remaining.size(); ++i) {
-      for (int j = i + 1; j < remaining.size(); ++j) {
-        int access;
-        CUDA_CHECK(
-            cudaDeviceCanAccessPeer(&access, remaining[i], remaining[j]));
-        if (access) {
-          pairs->push_back(DevicePair(remaining[i], remaining[j]));
-          DLOG(INFO) << "P2P pair: " << remaining[i] << ":" << remaining[j];
-          remaining.erase(remaining.begin() + j);
-          break;
-        }
-      }
-    }
-  }
-  s.str("");
-  for (int i = 0; i < remaining.size(); ++i) {
-    s << (i ? ", " : "") << remaining[i];
-  }
-  DLOG(INFO) << "GPUs paired by P2P access, remaining: " << s.str();
-
-  // Group remaining
-  remaining_depth = ceil(log2(remaining.size()));
-  for (int d = 0; d < remaining_depth; ++d) {
-    for (int i = 0; i < remaining.size(); ++i) {
-      pairs->push_back(DevicePair(remaining[i], remaining[i + 1]));
-      DLOG(INFO) << "Remaining pair: " << remaining[i] << ":"
-                 << remaining[i + 1];
-      remaining.erase(remaining.begin() + i + 1);
-    }
-  }
-
-  // Should only be the parent node remaining
-  CHECK_EQ(remaining.size(), 1);
-
-  pairs->insert(pairs->begin(), DevicePair(-1, remaining[0]));
-
-  CHECK(pairs->size() == devices.size());
-  for (int i = 0; i < pairs->size(); ++i) {
-    CHECK((*pairs)[i].parent() != (*pairs)[i].device());
-    for (int j = i + 1; j < pairs->size(); ++j) {
-      CHECK((*pairs)[i].device() != (*pairs)[j].device());
-    }
+  pairs->push_back(DevicePair(-1, devices[0]));
+  for (int i = 0; i < devices.size() - 1; ++i) {
+    pairs->push_back(DevicePair(devices[i], devices[i + 1]));
   }
 #else
   NO_GPU;
@@ -200,70 +157,84 @@ void DevicePair::compute(const vector<int> devices, vector<DevicePair>* pairs) {
 
 template<typename Dtype>
 P2PSync<Dtype>::P2PSync(shared_ptr<Solver<Dtype> > root_solver,
-                        P2PSync<Dtype>* parent, const SolverParameter& param)
+                        int rank, int nranks, const SolverParameter& param)
     : GPUParams<Dtype>(root_solver, param.device_id()),
-      parent_(parent),
+      rank_(rank),
+      nranks_(nranks),
+      parent_(),
       children_(),
       queue_(),
       initial_iter_(root_solver->iter()),
-      solver_() {
+      solver_(),
+      params_(param),
+      per_parameter_reduce_(param.per_parameter_reduce()) {
+#ifndef USE_NCCL
+  LOG(FATAL) << "USE_NCCL := 1 must be specified for multi-GPU";
+#endif
+
 #ifndef CPU_ONLY
   int initial_device;
   CUDA_CHECK(cudaGetDevice(&initial_device));
   const int self = param.device_id();
   CUDA_CHECK(cudaSetDevice(self));
 
-  if (parent == NULL) {
+  if (rank == 0) {
     solver_ = root_solver;
   } else {
     Caffe::set_root_solver(false);
-    solver_.reset(new WorkerSolver<Dtype>(param, root_solver.get()));
+    solver_.reset(caffe::SolverRegistry<Dtype>::CreateSolver(param,
+        root_solver.get()));
     Caffe::set_root_solver(true);
   }
   this->configure(solver_.get());
   solver_->add_callback(this);
 
-  if (parent) {
-    // Enable p2p access between devices
-    const int peer = parent->solver_->param().device_id();
-    int access;
-    CUDA_CHECK(cudaDeviceCanAccessPeer(&access, self, peer));
-    if (access) {
-      CUDA_CHECK(cudaDeviceEnablePeerAccess(peer, 0));
-    } else {
-      LOG(INFO)<< "GPU " << self << " does not have p2p access to GPU " << peer;
-    }
-    // Allocate receiving buffer on parent
-    CUDA_CHECK(cudaSetDevice(peer));
-    CUDA_CHECK(cudaMalloc(&parent_grads_, size_ * sizeof(Dtype)));
-    CUDA_CHECK(cudaSetDevice(self));
-  }
+#if defined(USE_NCCL)
+  nccl_comms_.resize(1);
+#endif
+  comm_streams_.resize(1);
+  CUDA_CHECK(cudaStreamCreateWithFlags(&comm_streams_[0],
+                                       cudaStreamNonBlocking));
 
+  CHECK_GT(comm_streams_.size(), 0);
   CUDA_CHECK(cudaSetDevice(initial_device));
 #else
   NO_GPU;
 #endif
 }
 
+#ifndef CPU_ONLY
+#ifdef USE_NCCL
+template<typename Dtype>
+void P2PSync<Dtype>::setNCCLComm(ncclComm_t comm) {
+  this->nccl_comms_[0] = comm;
+}
+
+template<typename Dtype>
+ncclComm_t P2PSync<Dtype>::getNCCLComm() {
+  return this->nccl_comms_[0];
+}
+#endif
+
+template<typename Dtype>
+cudaStream_t P2PSync<Dtype>::getCommStream() {
+  return this->comm_streams_[0];
+}
+#endif
+
 template<typename Dtype>
 P2PSync<Dtype>::~P2PSync() {
 #ifndef CPU_ONLY
-  int initial_device;
-  CUDA_CHECK(cudaGetDevice(&initial_device));
-  const int self = solver_->param().device_id();
-  CUDA_CHECK(cudaSetDevice(self));
-
-  if (parent_) {
-    CUDA_CHECK(cudaFree(parent_grads_));
-    const int peer = parent_->solver_->param().device_id();
-    int access;
-    CUDA_CHECK(cudaDeviceCanAccessPeer(&access, self, peer));
-    if (access) {
-      CUDA_CHECK(cudaDeviceDisablePeerAccess(peer));
-    }
+  for (int i = 0; i < comm_streams_.size(); ++i) {
+    cudaStreamDestroy(comm_streams_[i]);
   }
 
-  CUDA_CHECK(cudaSetDevice(initial_device));
+#ifdef USE_NCCL
+  for (int i = 0; i < nccl_comms_.size(); ++i) {
+    ncclCommDestroy(nccl_comms_[i]);
+  }
+#endif  // USE_NCCL
+
 #endif
 }
 
@@ -284,143 +255,200 @@ void P2PSync<Dtype>::InternalThreadEntry() {
 }
 
 template<typename Dtype>
+void P2PSync<Dtype>::soft_barrier() {
+#ifndef CPU_ONLY
+  // CPU barrier to avoid busy-polling on the GPU.
+  bar->wait();
+#endif
+}
+
+template<typename Dtype>
 void P2PSync<Dtype>::on_start() {
 #ifndef CPU_ONLY
-#ifdef DEBUG
-  int device;
-  CUDA_CHECK(cudaGetDevice(&device));
-  CHECK(device == solver_->param().device_id());
-#else
-//  CHECK(false);
-#endif
-
-  // Wait for update from parent
-  if (parent_) {
-    P2PSync<Dtype> *parent = queue_.pop();
-    CHECK(parent == parent_);
-  }
-
-  // Update children
-  for (int i = children_.size() - 1; i >= 0; i--) {
-    Dtype* src = data_;
-    Dtype* dst = children_[i]->data_;
-
-#ifdef DEBUG
-    cudaPointerAttributes attributes;
-    CUDA_CHECK(cudaPointerGetAttributes(&attributes, src));
-    CHECK(attributes.device == device);
-    CUDA_CHECK(cudaPointerGetAttributes(&attributes, dst));
-    CHECK(attributes.device == children_[i]->solver_->param().device_id());
-#endif
-
-    CUDA_CHECK(cudaMemcpyAsync(dst, src, size_ * sizeof(Dtype),
-        cudaMemcpyDeviceToDevice, cudaStreamDefault));
-    CUDA_CHECK(cudaStreamSynchronize(cudaStreamDefault));
-    children_[i]->queue_.push(this);
-  }
+#ifdef USE_NCCL
+  CUDA_CHECK(cudaStreamSynchronize(cudaStreamDefault));
+  NCCL_CHECK(ncclBcast(data_, size_, nccl::dataType<Dtype>::type, 0,
+      getNCCLComm(), getCommStream()));
+  CUDA_CHECK(cudaStreamSynchronize(getCommStream()));
+#endif  // USE_NCCL
 #endif
 }
 
-template<typename Dtype>
-void P2PSync<Dtype>::on_gradients_ready() {
+template < typename Dtype > void P2PSync < Dtype >::allreduce ()
+{
 #ifndef CPU_ONLY
-#ifdef DEBUG
-  int device;
-  CUDA_CHECK(cudaGetDevice(&device));
-  CHECK(device == solver_->param().device_id());
-#endif
+#ifdef USE_NCCL
+  // only reduce if we haven't in the bwd pass
+  if (!per_parameter_reduce_)
+    {
+      bar->wait ();
+      CUDA_CHECK (cudaStreamSynchronize (cudaStreamDefault));
+      NCCL_CHECK (ncclAllReduce
+		  (diff_, diff_1, size_, nccl::dataType < Dtype >::type,
+		   ncclSum, getNCCLComm (), getCommStream ()));
+        
+        
+      if (Caffe::root_solver ())
+	{
+caffe_mpi_allreduce<Dtype> (diff_1, diff_, size_, MPI_COMM_WORLD);
+}
 
-  // Sum children gradients as they appear in the queue
-  for (int i = 0; i < children_.size(); ++i) {
-    P2PSync<Dtype> *child = queue_.pop();
-    Dtype* src = child->parent_grads_;
-    Dtype* dst = diff_;
+NCCL_CHECK(ncclBcast(diff_, size_, nccl::dataType<Dtype>::type, 0,
+      getNCCLComm(), getCommStream()));
+    caffe_gpu_scal(size_, (Dtype)1.0 / total_gpus, diff_,
+        getCommStream());
+  }
+#endif  // USE_NCCL
+#endif  // CPU_ONLY
+}
 
-#ifdef DEBUG
-    bool ok = false;
-    for (int j = 0; j < children_.size(); ++j) {
-      if (child == children_[j]) {
-        ok = true;
+template<typename Dtype>
+void P2PSync<Dtype>::allreduce(int param_id) {
+#ifndef CPU_ONLY
+#ifdef USE_NCCL
+  // reduce aynchronously in the bwd path
+  if (per_parameter_reduce_) {
+    bar->wait();
+    const vector<shared_ptr<Blob<Dtype> > >& params = solver_->net()->params();
+
+    int mpi_size;
+    MPI_Comm_size (MPI_COMM_WORLD, &mpi_size);
+    if (mpi_size > 1) {
+      NCCL_CHECK(ncclAllReduce(params[param_id]->gpu_diff(),
+                             diff_1,
+                             params[param_id]->count(),
+                             nccl::dataType<Dtype>::type,
+                             ncclSum,
+                             getNCCLComm(),
+                             getCommStream()));
+
+      caffe_gpu_scal(params[param_id]->count(),(Dtype)1./total_gpus,diff_1,getCommStream());
+      CUDA_CHECK(cudaStreamSynchronize(getCommStream()));
+
+      if (Caffe::root_solver()) {
+        caffe_mpi_allreduce<Dtype>(diff_1,
+                                   params[param_id]->mutable_gpu_diff(), 
+                                   params[param_id]->count(), 
+                                   MPI_COMM_WORLD);
+
       }
+      NCCL_CHECK(ncclBcast(params[param_id]->mutable_gpu_diff(), 
+                         params[param_id]->count(), 
+                         nccl::dataType<Dtype>::type,
+                         0,
+                         getNCCLComm(), 
+                         getCommStream()));
+      CUDA_CHECK(cudaStreamSynchronize(getCommStream()));
+    } else {
+      NCCL_CHECK(ncclAllReduce(params[param_id]->gpu_diff(),
+                             params[param_id]->mutable_gpu_diff(),
+                             params[param_id]->count(),
+                             nccl::dataType<Dtype>::type,
+                             ncclSum,
+                             getNCCLComm(),
+                             getCommStream()));
+
+      caffe_gpu_scal(params[param_id]->count(),(Dtype)1./total_gpus,params[param_id]->mutable_gpu_diff(),getCommStream());
+      CUDA_CHECK(cudaStreamSynchronize(getCommStream()));
     }
-    CHECK(ok);
-    cudaPointerAttributes attributes;
-    CUDA_CHECK(cudaPointerGetAttributes(&attributes, src));
-    CHECK(attributes.device == device);
-    CUDA_CHECK(cudaPointerGetAttributes(&attributes, dst));
-    CHECK(attributes.device == device);
-#endif
-
-    caffe_gpu_add(size_, src, dst, dst);
   }
-
-  // Send gradients to parent
-  if (parent_) {
-    Dtype* src = diff_;
-    Dtype* dst = parent_grads_;
-
-#ifdef DEBUG
-    cudaPointerAttributes attributes;
-    CUDA_CHECK(cudaPointerGetAttributes(&attributes, src));
-    CHECK(attributes.device == device);
-    CUDA_CHECK(cudaPointerGetAttributes(&attributes, dst));
-    CHECK(attributes.device == parent_->solver_->param().device_id());
-#endif
-
-    CUDA_CHECK(cudaMemcpyAsync(dst, src, size_ * sizeof(Dtype),  //
-        cudaMemcpyDeviceToDevice, cudaStreamDefault));
-    CUDA_CHECK(cudaStreamSynchronize(cudaStreamDefault));
-    parent_->queue_.push(this);
-  } else {
-    // Loss functions divide gradients by the batch size, so to compensate
-    // for split batch, the root solver divides by number of solvers.
-    caffe_gpu_scal(size_, Dtype(1.0 / Caffe::solver_count()), diff_);
-  }
+#endif  // USE_NCCL
+#endif  // CPU_ONLY
+}
+template <typename Dtype>
+void P2PSync<Dtype>::syncCommStream() {
+#ifndef CPU_ONLY
+  CUDA_CHECK(cudaStreamSynchronize(comm_streams_[0]));
 #endif
 }
 
 template<typename Dtype>
-void P2PSync<Dtype>::Prepare(const vector<int>& gpus,
-            vector<shared_ptr<P2PSync<Dtype> > >* syncs) {
-  // Pair devices for map-reduce synchronization
-  vector<DevicePair> pairs;
-  DevicePair::compute(gpus, &pairs);
-  ostringstream s;
-  for (int i = 1; i < pairs.size(); ++i) {
-    s << (i == 1 ? "" : ", ") << pairs[i].parent() << ":" << pairs[i].device();
-  }
-  LOG(INFO)<< "GPUs pairs " << s.str();
+void P2PSync<Dtype>::allreduce_nccl_mpi(int param_id,
+                         ncclComm_t nccl_comm, 
+                         cudaStream_t comm_stream,
+			 bool root_solver) {
+#ifndef CPU_ONLY
+#ifdef USE_NCCL
+  // reduce aynchronously in the bwd patha
+  if (per_parameter_reduce_) {
+    bar->wait();
+    const vector<shared_ptr<Blob<Dtype> > >& params = solver_->net()->params();
 
-  SolverParameter param(solver_->param());
+    int mpi_size;
+    MPI_Comm_size (MPI_COMM_WORLD, &mpi_size);
+     
 
-  // Build the GPU tree by finding the parent for each solver
-  for (int attempts = 0; attempts < pairs.size(); ++attempts) {
-    for (int i = 1; i < pairs.size(); ++i) {
-      if (!syncs->at(i).get()) {
-        P2PSync<Dtype>* parent = NULL;
-        for (int j = 0; j < syncs->size(); ++j) {
-          P2PSync<Dtype>* sync = j == 0 ? this : syncs->at(j).get();
-          if (sync) {
-            const SolverParameter& p = sync->solver()->param();
-            if (p.device_id() == pairs[i].parent()) {
-              parent = sync;
-            }
-          }
-        }
-        if (parent) {
-          param.set_device_id(pairs[i].device());
-          syncs->at(i).reset(new P2PSync<Dtype>(solver_, parent, param));
-          parent->children_.push_back((P2PSync<Dtype>*) syncs->at(i).get());
-        }
+    if (mpi_size > 1) {
+      NCCL_CHECK(ncclAllReduce(params[param_id]->gpu_diff(),
+                             diff_1,
+                             params[param_id]->count(),
+                             nccl::dataType<Dtype>::type,
+                             ncclSum,
+                             nccl_comm,
+                             comm_stream));
+
+      caffe_gpu_scal(params[param_id]->count(),(Dtype)1./total_gpus,diff_1,comm_stream);
+      CUDA_CHECK(cudaStreamSynchronize(comm_stream));
+      if (root_solver) {
+        caffe_mpi_allreduce<Dtype>(diff_1,
+                                   params[param_id]->mutable_gpu_diff(),
+                                   params[param_id]->count(),
+                                   MPI_COMM_WORLD);
       }
+      NCCL_CHECK(ncclBcast(params[param_id]->mutable_gpu_diff(),
+                         params[param_id]->count(),
+                         nccl::dataType<Dtype>::type,
+                         0,
+                         nccl_comm,
+                         comm_stream));
+      CUDA_CHECK(cudaStreamSynchronize(comm_stream));
+    } else {
+      
+      NCCL_CHECK(ncclAllReduce(params[param_id]->gpu_diff(),
+                             params[param_id]->mutable_gpu_diff(),
+                             params[param_id]->count(),
+                             nccl::dataType<Dtype>::type,
+                             ncclSum,
+                             nccl_comm,
+                             comm_stream));
+
+      caffe_gpu_scal(params[param_id]->count(),(Dtype)1./total_gpus,params[param_id]->mutable_gpu_diff(),comm_stream);
+      CUDA_CHECK(cudaStreamSynchronize(comm_stream));
     }
+
   }
+#endif  // USE_NCCL
+#endif  // CPU_ONLY
 }
+
 
 template<typename Dtype>
 void P2PSync<Dtype>::Run(const vector<int>& gpus) {
   vector<shared_ptr<P2PSync<Dtype> > > syncs(gpus.size());
-  Prepare(gpus, &syncs);
+  bar.reset(new boost::barrier(gpus.size()));
+  SolverParameter param = solver_->param();
+  for (int i = 1; i < gpus.size(); ++i) {
+    param.set_device_id(gpus[i]);
+    syncs[i].reset(new P2PSync<Dtype>(solver_, i, gpus.size(), param));
+  }
+#ifdef USE_NCCL
+  ncclComm_t *comms = new ncclComm_t[nranks_];
+  int *gpu_list = new int[nranks_];
+  for (int i = 0; i < nranks_; ++i) {
+    gpu_list[i] = gpus[i];
+  }
+  NCCL_CHECK(ncclCommInitAll(comms, nranks_, gpu_list));
+
+  this->setNCCLComm(comms[0]);
+
+  for (int i = 1; i < nranks_; ++i) {
+    syncs[i]->setNCCLComm(comms[i]);
+  }
+  delete[] comms;
+  delete[] gpu_list;
+#else
+  LOG(FATAL) << "Multi-GPU execution not available - rebuild with USE_NCCL";
+#endif  // USE_NCCL
 
   LOG(INFO)<< "Starting Optimization";
 
@@ -429,10 +457,61 @@ void P2PSync<Dtype>::Run(const vector<int>& gpus) {
   }
 
   // Run root solver on current thread
-  solver_->Solve();
+  this->solver_->Solve();
 
   for (int i = 1; i < syncs.size(); ++i) {
     syncs[i]->StopInternalThread();
+  }
+}
+
+template<typename Dtype>
+void P2PSync<Dtype>::divide_batch_size(NetParameter* net) {
+  int solver_count = Caffe::solver_count();
+  for (int i = 0; i < net->layer_size(); ++i) {
+    string m = "Batch size must be divisible by the number of solvers (GPUs)";
+    if (net->layer(i).has_data_param()) {
+      if (net->layer(i).data_param().has_batch_size()) {
+        uint32_t total = net->layer(i).data_param().batch_size();
+        uint32_t batch = total / solver_count;
+        CHECK(batch * solver_count == total) << m;
+        net->mutable_layer(i)->mutable_data_param()->set_batch_size(batch);
+      }
+    }
+    if (net->layer(i).has_hdf5_data_param()) {
+      if (net->layer(i).hdf5_data_param().has_batch_size()) {
+        uint32_t total = net->layer(i).hdf5_data_param().batch_size();
+        uint32_t batch = total / solver_count;
+        CHECK(batch * solver_count == total) << m;
+        net->mutable_layer(i)->mutable_hdf5_data_param()->set_batch_size(batch);
+      }
+    }
+    if (net->layer(i).has_image_data_param()) {
+      if (net->layer(i).image_data_param().has_batch_size()) {
+        uint32_t total = net->layer(i).image_data_param().batch_size();
+        uint32_t batch = total / solver_count;
+        CHECK(batch * solver_count == total) << m;
+        net->mutable_layer(i)->mutable_image_data_param()->set_batch_size(
+            batch);
+      }
+    }
+    if (net->layer(i).has_memory_data_param()) {
+      if (net->layer(i).memory_data_param().has_batch_size()) {
+        uint32_t total = net->layer(i).memory_data_param().batch_size();
+        uint32_t batch = total / solver_count;
+        CHECK(batch * solver_count == total) << m;
+        net->mutable_layer(i)->mutable_memory_data_param()->set_batch_size(
+            batch);
+      }
+    }
+    if (net->layer(i).has_window_data_param()) {
+      if (net->layer(i).window_data_param().has_batch_size()) {
+        uint32_t total = net->layer(i).window_data_param().batch_size();
+        uint32_t batch = total / solver_count;
+        CHECK(batch * solver_count == total) << m;
+        net->mutable_layer(i)->mutable_window_data_param()->set_batch_size(
+            batch);
+      }
+    }
   }
 }
 

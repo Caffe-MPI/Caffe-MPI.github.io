@@ -3,18 +3,13 @@
 #include <thrust/functional.h>  // thrust::plus
 #include <thrust/reduce.h>
 
+#include <algorithm>
 #include <cmath>
-#include <cstdlib>
-#include <cstring>
 
 #include "caffe/common.hpp"
 #include "caffe/util/math_functions.hpp"
 
 namespace caffe {
-
-void gpu_sync(){
-     cudaDeviceSynchronize();
-}
 
 template <>
 void caffe_gpu_gemm<float>(const CBLAS_TRANSPOSE TransA,
@@ -94,6 +89,26 @@ void caffe_gpu_scal<float>(const int N, const float alpha, float *X) {
 template <>
 void caffe_gpu_scal<double>(const int N, const double alpha, double *X) {
   CUBLAS_CHECK(cublasDscal(Caffe::cublas_handle(), N, &alpha, X, 1));
+}
+
+template <>
+void caffe_gpu_scal<float>(const int N, const float alpha, float* X,
+    cudaStream_t str) {
+  cudaStream_t initial_stream;
+  CUBLAS_CHECK(cublasGetStream(Caffe::cublas_handle(), &initial_stream));
+  CUBLAS_CHECK(cublasSetStream(Caffe::cublas_handle(), str));
+  CUBLAS_CHECK(cublasSscal(Caffe::cublas_handle(), N, &alpha, X, 1));
+  CUBLAS_CHECK(cublasSetStream(Caffe::cublas_handle(), initial_stream));
+}
+
+template <>
+void caffe_gpu_scal<double>(const int N, const double alpha, double* X,
+    cudaStream_t str) {
+  cudaStream_t initial_stream;
+  CUBLAS_CHECK(cublasGetStream(Caffe::cublas_handle(), &initial_stream));
+  CUBLAS_CHECK(cublasSetStream(Caffe::cublas_handle(), str));
+  CUBLAS_CHECK(cublasDscal(Caffe::cublas_handle(), N, &alpha, X, 1));
+  CUBLAS_CHECK(cublasSetStream(Caffe::cublas_handle(), initial_stream));
 }
 
 template <>
@@ -377,51 +392,6 @@ DEFINE_AND_INSTANTIATE_GPU_UNARY_FUNC(sign, y[index] = (Dtype(0) < x[index])
                                       - (x[index] < Dtype(0)));
 DEFINE_AND_INSTANTIATE_GPU_UNARY_FUNC(sgnbit, y[index] = signbit(x[index]));
 
-__global__ void popc_kernel(const int n, const float* a,
-    const float* b, uint8_t* y) {
-  CUDA_KERNEL_LOOP(index, n) {
-    y[index] = __popc(static_cast<uint32_t>(a[index]) ^
-                      static_cast<uint32_t>(b[index]));
-  }
-}
-
-__global__ void popcll_kernel(const int n, const double* a,
-    const double* b, uint8_t* y) {
-  CUDA_KERNEL_LOOP(index, n) {
-    y[index] = __popcll(static_cast<uint64_t>(a[index]) ^
-                      static_cast<uint64_t>(b[index]));
-  }
-}
-
-template <>
-uint32_t caffe_gpu_hamming_distance<float>(const int n, const float* x,
-                                  const float* y) {
-  // TODO: Fix caffe_gpu_hamming_distance (see failing unit test
-  // TestHammingDistanceGPU in test_math_functions.cpp).
-  NOT_IMPLEMENTED;
-  thrust::device_vector<uint8_t> popcounts(n);
-  // NOLINT_NEXT_LINE(whitespace/operators)
-  popc_kernel<<<CAFFE_GET_BLOCKS(n), CAFFE_CUDA_NUM_THREADS>>>(
-      n, x, y, thrust::raw_pointer_cast(popcounts.data()));
-  return thrust::reduce(popcounts.begin(), popcounts.end(),
-                        (uint32_t) 0, thrust::plus<uint32_t>());
-}
-
-template <>
-uint32_t caffe_gpu_hamming_distance<double>(const int n, const double* x,
-                                   const double* y) {
-  // TODO: Fix caffe_gpu_hamming_distance (see failing unit test
-  // TestHammingDistanceGPU in test_math_functions.cpp).
-  NOT_IMPLEMENTED;
-  thrust::device_vector<uint8_t> popcounts(n);
-  // NOLINT_NEXT_LINE(whitespace/operators)
-  popcll_kernel<<<CAFFE_GET_BLOCKS(n), CAFFE_CUDA_NUM_THREADS>>>(
-      n, x, y, thrust::raw_pointer_cast(popcounts.data()));
-  return thrust::reduce(popcounts.begin(), popcounts.end(),
-                        /* NOLINT_NEXT_LINE(build/include_what_you_use) */
-                        (uint32_t) 0, thrust::plus<uint32_t>());
-}
-
 void caffe_gpu_rng_uniform(const int n, unsigned int* r) {
   CURAND_CHECK(curandGenerate(Caffe::curand_generator(), r, n));
 }
@@ -464,6 +434,53 @@ void caffe_gpu_rng_gaussian(const int n, const double mu, const double sigma,
                             double* r) {
   CURAND_CHECK(
       curandGenerateNormalDouble(Caffe::curand_generator(), r, n, mu, sigma));
+}
+
+template <typename Dtype>
+__global__ void caffe_gpu_eltwise_max_kernel(const int N,
+    const Dtype alpha, const Dtype* x, const Dtype beta, Dtype* y) {
+  CUDA_KERNEL_LOOP(index, N) {
+    y[index] = max(alpha * x[index] , beta * y[index]);
+  }
+}
+
+template <>
+void caffe_gpu_eltwise_max<float>(const int N,
+    const float alpha, const float* x, const float beta, float* y) {
+  // NOLINT_NEXT_LINE(whitespace/operators)
+  caffe_gpu_eltwise_max_kernel<float><<<CAFFE_GET_BLOCKS(N),
+                               CAFFE_CUDA_NUM_THREADS>>>(N, alpha, x, beta, y);
+}
+template <>
+void caffe_gpu_eltwise_max<double>(const int N,
+    const double alpha, const double* x, const double beta, double* y) {
+  // NOLINT_NEXT_LINE(whitespace/operators)
+  caffe_gpu_eltwise_max_kernel<double><<<CAFFE_GET_BLOCKS(N),
+                               CAFFE_CUDA_NUM_THREADS>>>(N, alpha, x, beta, y);
+}
+
+
+template <typename Dtype>
+__global__ void caffe_gpu_eltwise_min_kernel(const int N,
+    const Dtype alpha, const Dtype* x, const Dtype beta, Dtype* y) {
+  CUDA_KERNEL_LOOP(index, N) {
+    y[index] = min(alpha * x[index] , beta * y[index]);
+  }
+}
+
+template <>
+void caffe_gpu_eltwise_min<float>(const int N,
+    const float alpha, const float* x, const float beta, float* y) {
+  // NOLINT_NEXT_LINE(whitespace/operators)
+  caffe_gpu_eltwise_min_kernel<float><<<CAFFE_GET_BLOCKS(N),
+                               CAFFE_CUDA_NUM_THREADS>>>(N, alpha, x, beta, y);
+}
+template <>
+void caffe_gpu_eltwise_min<double>(const int N,
+    const double alpha, const double* x, const double beta, double* y) {
+  // NOLINT_NEXT_LINE(whitespace/operators)
+  caffe_gpu_eltwise_min_kernel<double><<<CAFFE_GET_BLOCKS(N),
+                               CAFFE_CUDA_NUM_THREADS>>>(N, alpha, x, beta, y);
 }
 
 }  // namespace caffe

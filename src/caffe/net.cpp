@@ -4,7 +4,8 @@
 #include <string>
 #include <utility>
 #include <vector>
-
+#include "mpi.h"
+#include <sys/time.h>
 #include "hdf5.h"
 
 #include "caffe/common.hpp"
@@ -19,7 +20,137 @@
 
 #include "caffe/test/test_caffe_main.hpp"
 
+#include <boost/bind.hpp>
+#include <boost/thread.hpp>
+#include <queue>
 namespace caffe {
+
+class ThreadForMPI {
+ private:
+    std::queue< boost::function< void() > > tasks_;
+    std::shared_ptr<boost::thread> thread_;
+    //std::thread* thread_;
+
+        boost::mutex mutex_;
+        boost::condition_variable condition_;
+        boost::condition_variable completed_;
+
+    std::size_t available_;
+    std::size_t total_;
+
+    bool running_;
+    bool complete_;
+
+ public:
+    explicit ThreadForMPI(std::size_t task_size,const int device_id)
+        : running_(true), complete_(true),
+          available_(0), total_(task_size)  {
+        // Need to be changed for there is only one thread.
+            thread_.reset(new boost::thread(boost::bind(&ThreadForMPI::main_loop_for_mpi, this, device_id)));
+            //thread_ = new boost::thread(boost::bind(&ThreadForMPI::main_loop_for_mpi, this));
+    }
+    ~ThreadForMPI() {
+        // Set running flag to false.
+        {
+            boost::unique_lock< boost::mutex > lock(mutex_);
+            running_ = false;
+            condition_.notify_one();
+        }
+
+        try {
+            thread_->join();
+            //printf("ThreadForMPI destroyed!\n");
+        }
+        // Suppress all exceptions.
+        catch (const std::exception&) {}
+    }
+
+        /// @brief Add task to the thread.
+    template <typename Task>
+    void runTask(Task task) {
+        boost::unique_lock<boost::mutex> lock(mutex_);
+        //printf("Hello in runTask\n");
+        // Set task and signal condition variable so that a worker thread will
+        // wake up and use the task.
+        tasks_.push(boost::function<void()>(task));
+        complete_ = false;
+        condition_.notify_one();
+    }
+
+    /// @brief Wait for queue to be empty
+    void waitMPIComplete() {
+        boost::unique_lock<boost::mutex> lock(mutex_);
+        if (!complete_)
+            completed_.wait(lock);
+    }
+
+ private:
+    /// @brief Entry point for the mpi communication thread.
+    void main_loop_for_mpi(int device_id) {
+        CUDA_CHECK(cudaSetDevice(device_id));
+        while (running_) {
+            // Wait on condition variable while the task is empty and
+            // the thread is still running.
+
+            boost::unique_lock<boost::mutex> lock(mutex_);
+            while (tasks_.empty() && running_) {
+                condition_.wait(lock);
+            }
+
+            // If pool is no longer running, break out of loop.
+            if (!running_) break;
+
+            {
+
+                boost::function< void() > task = tasks_.front();
+                //std::cout << "tasks_.size = " << tasks_.size() << std::endl;
+                tasks_.pop();
+
+                lock.unlock();
+
+                // Run the task.
+                try {
+                    task();
+                }
+                // Suppress all exceptions.
+                catch ( const std::exception& ) {
+                    std::cout << "Error in Task running." << std::endl; 
+                }
+
+                lock.lock();
+
+                // Increment count, indicating thread is available.
+                ++available_;
+                if (tasks_.empty() && available_ == total_) {
+                    complete_ = true;
+                    completed_.notify_one();
+                }
+            }
+        }  // while running_
+    }
+};
+
+
+template <typename Dtype>
+void Net<Dtype>::allreduce_per_param(Solver<Dtype>* asolver_, const int param_id_) {
+  for (int k = 0; k < asolver_->callbacks().size(); ++k) {
+    asolver_->callbacks()[k]->allreduce(param_id_);            
+  }
+}
+
+template <typename Dtype>
+void Net<Dtype>::nccl_mpi_comm_per_param(Solver<Dtype>* asolver, 
+                    const int param_id, 
+ 		    ncclComm_t nccl_comm, 
+		    cudaStream_t comm_stream,
+		    bool root_solver)	 {
+  for (int k = 0; k < asolver->callbacks().size(); ++k) {
+    asolver->callbacks()[k]->allreduce_nccl_mpi(param_id, 
+	                         nccl_comm, 
+				 comm_stream, 
+				 root_solver);           
+  }
+}
 
 template <typename Dtype>
 Net<Dtype>::Net(const NetParameter& param, const Net* root_net)
@@ -28,20 +159,11 @@ Net<Dtype>::Net(const NetParameter& param, const Net* root_net)
 }
 
 template <typename Dtype>
-Net<Dtype>::Net(const string& param_file, Phase phase,
-    const int level, const vector<string>* stages,
-    const Net* root_net)
+Net<Dtype>::Net(const string& param_file, Phase phase, const Net* root_net)
     : root_net_(root_net) {
   NetParameter param;
   ReadNetParamsFromTextFileOrDie(param_file, &param);
-  // Set phase, stages and level
   param.mutable_state()->set_phase(phase);
-  if (stages != NULL) {
-    for (int i = 0; i < stages->size(); i++) {
-      param.mutable_state()->add_stage((*stages)[i]);
-    }
-  }
-  param.mutable_state()->set_level(level);
   Init(param);
 }
 
@@ -55,9 +177,12 @@ void Net<Dtype>::Init(const NetParameter& in_param) {
   // the current NetState.
   NetParameter filtered_param;
   FilterNet(in_param, &filtered_param);
+  if (phase_ == TRAIN) {
+    caffe::P2PSync<Dtype>::divide_batch_size(&filtered_param);
+  }
   LOG_IF(INFO, Caffe::root_solver())
       << "Initializing net from parameters: " << std::endl
-      << filtered_param.DebugString();
+      << filtered_param.DebugString()<<std::endl;
   // Create a copy of filtered_param with splits added where necessary.
   NetParameter param;
   InsertSplits(filtered_param, &param);
@@ -77,6 +202,11 @@ void Net<Dtype>::Init(const NetParameter& in_param) {
     // For non-root solvers, whether this layer is shared from root_net_.
     bool share_from_root = !Caffe::root_solver()
         && root_net_->layers_[layer_id]->ShareInParallel();
+    LOG(INFO) << "Initializing net from parameters: " << std::endl
+      << share_from_root <<std::endl;
+//      << layer_id <<std::endl;
+//      << Caffe::root_solver() <<std::endl;
+//      <<root_net_->layers_[layer_id]->ShareInParallel();
     // Inherit phase from net if unset.
     if (!param.layer(layer_id).has_phase()) {
       param.mutable_layer(layer_id)->set_phase(phase_);
@@ -279,6 +409,13 @@ void Net<Dtype>::Init(const NetParameter& in_param) {
     layer_names_index_[layer_names_[layer_id]] = layer_id;
   }
   ShareWeights();
+
+  // invert param_layer_indices_ to give map of
+  // (level_id, local param_id) -> global param_id
+  for (int i = 0; i < param_layer_indices_.size(); ++i) {
+    layer_index_params_[param_layer_indices_[i]] = i;
+  }
+
   debug_info_ = param.debug_info();
   LOG_IF(INFO, Caffe::root_solver()) << "Network initialization done.";
 }
@@ -587,42 +724,66 @@ const vector<Blob<Dtype>*>& Net<Dtype>::Forward(
 }
 
 template <typename Dtype>
-const vector<Blob<Dtype>*>& Net<Dtype>::ForwardTest(
-    const vector<Blob<Dtype>*> & bottom, Dtype* loss) {
-for (int i = 0; i < bottom.size(); ++i) {
-    net_input_blobs_[i]->CopyFrom(*bottom[i]);
-  }
-  return ForwardPrefilledTest(loss);
-}
-
-template <typename Dtype>
-const vector<Blob<Dtype>*>& Net<Dtype>::ForwardPrefilledTest(Dtype* loss) {
-  if (loss != NULL) {
-        layers_[0]->Reshape(bottom_vecs_[0], top_vecs_[0]);
-        if(phase_ == TRAIN)
-                layers_[0]->taskiter = taskiter;
-        Dtype layer_loss = layers_[0]->ForwardTest(bottom_vecs_[0], top_vecs_[0]);//Only for data layer
-        *loss = ForwardFromTo(1, layers_.size() - 1);
-        *loss += layer_loss;
-  }
-  return net_output_blobs_;
-}
-
-
-template <typename Dtype>
 void Net<Dtype>::BackwardFromTo(int start, int end) {
   CHECK_GE(end, 0);
   CHECK_LT(start, layers_.size());
+  std::shared_ptr<ThreadForMPI> thread_mpi_;
+  int num_comms = 0;
+  bool is_root_solver;
+  is_root_solver = Caffe::root_solver();
+
+  for (int i = start; i >= end; --i) {
+    if (layer_need_backward_[i]) {
+       if (Caffe::solver_count() > 1) {
+           for (int j = 0; j < layers_[i]->blobs().size(); ++j) {
+               for (int k = 0; k < solver_->callbacks().size(); ++k) {
+                   ++num_comms;
+               }
+           }
+       }
+    }
+  }
+
+  int initial_device;
+  CUDA_CHECK(cudaGetDevice(&initial_device));
+
+  //printf("Number of Comms is %d\n", num_comms);    
+
+  thread_mpi_.reset(new ThreadForMPI(num_comms, initial_device));
+
   for (int i = start; i >= end; --i) {
     if (layer_need_backward_[i]) {
       layers_[i]->Backward(
           top_vecs_[i], bottom_need_backward_[i], bottom_vecs_[i]);
       if (debug_info_) { BackwardDebugInfo(i); }
+    if (Caffe::solver_count() > 1) {
+#ifndef CPU_ONLY
+        CUDA_CHECK(cudaStreamSynchronize(cudaStreamDefault));
+#endif
+        for (int j = 0; j < layers_[i]->blobs().size(); ++j) {
+          int param_id = layer_index_params_[make_pair(i, j)];
+
+          // check if we need to synchronize after reduction
+          bool need_sync = false;
+          // If param has been split, update owner and sync
+          if (param_owners_[param_id] >= 0) {
+            param_id = param_owners_[param_id];
+            need_sync = true;
+          }
+          thread_mpi_->runTask(boost::bind(&Net<Dtype>::nccl_mpi_comm_per_param,
+                                  this,solver_,param_id,
+                                  solver_->callbacks()[0]->getNCCLComm(),
+                                  solver_->callbacks()[0]->getCommStream(),
+                                  is_root_solver));
+        }
+      }
     }
   }
-  for(int ii = params_.size()-1 ; ii>=0 ; --ii)
-caffe_mpi_send<Dtype>(params_[ii]->mutable_gpu_diff(),params_[ii]->count(),
-                                        0,TAG_UPDATE,MPI_COMM_WORLD);
+
+
+  // wait for all the tasks finished.
+  thread_mpi_->waitMPIComplete();
+
 }
 
 template <typename Dtype>

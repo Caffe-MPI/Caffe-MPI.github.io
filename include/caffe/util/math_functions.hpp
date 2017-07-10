@@ -11,7 +11,6 @@
 #include "caffe/util/mkl_alternate.hpp"
 
 namespace caffe {
-void gpu_sync();
 
 // Caffe gemm provides a simpler interface to the gemm functions, with the
 // limitation that the data has to be contiguous in memory.
@@ -32,6 +31,16 @@ void caffe_axpy(const int N, const Dtype alpha, const Dtype* X,
 
 template <typename Dtype>
 void caffe_cpu_axpby(const int N, const Dtype alpha, const Dtype* X,
+    const Dtype beta, Dtype* Y);
+
+// y[i] = max(a * x[i], b * y[i])
+template <typename Dtype>
+void caffe_cpu_eltwise_max(const int N, const Dtype alpha, const Dtype* X,
+    const Dtype beta, Dtype* Y);
+
+// y[i] = min(a * x[i], b * y[i])
+template <typename Dtype>
+void caffe_cpu_eltwise_min(const int N, const Dtype alpha, const Dtype* X,
     const Dtype beta, Dtype* Y);
 
 template <typename Dtype>
@@ -101,9 +110,6 @@ Dtype caffe_cpu_dot(const int n, const Dtype* x, const Dtype* y);
 template <typename Dtype>
 Dtype caffe_cpu_strided_dot(const int n, const Dtype* x, const int incx,
     const Dtype* y, const int incy);
-
-template <typename Dtype>
-int caffe_cpu_hamming_distance(const int n, const Dtype* x, const Dtype* y);
 
 // Returns the sum of the absolute values of the elements of vector x
 template <typename Dtype>
@@ -187,7 +193,12 @@ template <typename Dtype>
 void caffe_gpu_add_scalar(const int N, const Dtype alpha, Dtype *X);
 
 template <typename Dtype>
-void caffe_gpu_scal(const int N, const Dtype alpha, Dtype *X);
+void caffe_gpu_scal(const int N, const Dtype alpha, Dtype* X);
+
+#ifndef CPU_ONLY
+template <typename Dtype>
+void caffe_gpu_scal(const int N, const Dtype alpha, Dtype* X, cudaStream_t str);
+#endif
 
 template <typename Dtype>
 void caffe_gpu_add(const int N, const Dtype* a, const Dtype* b, Dtype* y);
@@ -236,10 +247,6 @@ template <typename Dtype>
 void caffe_gpu_dot(const int n, const Dtype* x, const Dtype* y, Dtype* out);
 
 template <typename Dtype>
-uint32_t caffe_gpu_hamming_distance(const int n, const Dtype* x,
-                                    const Dtype* y);
-
-template <typename Dtype>
 void caffe_gpu_asum(const int n, const Dtype* x, Dtype* y);
 
 template<typename Dtype>
@@ -253,6 +260,17 @@ void caffe_gpu_fabs(const int n, const Dtype* x, Dtype* y);
 
 template <typename Dtype>
 void caffe_gpu_scale(const int n, const Dtype alpha, const Dtype *x, Dtype* y);
+
+// y[i] = max(a * x[i], b * y[i])
+template <typename Dtype>
+void caffe_gpu_eltwise_max(const int n, const Dtype alpha, const Dtype* x,
+    const Dtype beta, Dtype* y);
+
+// y[i] = min(a * x[i], b * y[i])
+template <typename Dtype>
+void caffe_gpu_eltwise_min(const int n, const Dtype alpha, const Dtype* x,
+    const Dtype beta, Dtype* y);
+
 
 #define DEFINE_AND_INSTANTIATE_GPU_UNARY_FUNC(name, operation) \
 template<typename Dtype> \

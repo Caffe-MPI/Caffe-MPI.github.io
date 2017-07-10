@@ -35,12 +35,14 @@ TYPED_TEST(BlobSimpleTest, TestInitialization) {
   EXPECT_EQ(this->blob_->count(), 0);
 }
 
+#ifndef CPU_ONLY
 TYPED_TEST(BlobSimpleTest, TestPointersCPUGPU) {
   EXPECT_TRUE(this->blob_preshaped_->gpu_data());
   EXPECT_TRUE(this->blob_preshaped_->cpu_data());
   EXPECT_TRUE(this->blob_preshaped_->mutable_gpu_data());
   EXPECT_TRUE(this->blob_preshaped_->mutable_cpu_data());
 }
+#endif
 
 TYPED_TEST(BlobSimpleTest, TestReshape) {
   this->blob_->Reshape(2, 3, 4, 5);
@@ -49,14 +51,6 @@ TYPED_TEST(BlobSimpleTest, TestReshape) {
   EXPECT_EQ(this->blob_->height(), 4);
   EXPECT_EQ(this->blob_->width(), 5);
   EXPECT_EQ(this->blob_->count(), 120);
-}
-
-TYPED_TEST(BlobSimpleTest, TestReshapeZero) {
-  vector<int> shape(2);
-  shape[0] = 0;
-  shape[1] = 5;
-  this->blob_->Reshape(shape);
-  EXPECT_EQ(this->blob_->count(), 0);
 }
 
 TYPED_TEST(BlobSimpleTest, TestLegacyBlobProtoShapeEquals) {

@@ -1,306 +1,17 @@
 #include <cstdio>
 
-#include <algorithm>
 #include <string>
 #include <vector>
-#include <queue>
-#include <sys/time.h>
 
-#include <thread>
-#include <atomic>
-#include <condition_variable>
-#include <mutex>
-#include <chrono>
+
 
 #include "caffe/solver.hpp"
-#include "caffe/sgd_solvers.hpp"
+#include "caffe/util/format.hpp"
 #include "caffe/util/hdf5.hpp"
 #include "caffe/util/io.hpp"
 #include "caffe/util/upgrade_proto.hpp"
-#include "caffe/util/mpi.hpp"
-#include "leveldb/db.h"
-#include "lmdb.h"
-#include "caffe/layers/data_layer.hpp"
-
-
-using namespace std;
-
-int currentUpdateCount=0;
-atomic_int undoneIter{0};
-mutex mutexUpdateWeight;
-condition_variable condUpdateWeight;
-condition_variable condUpdateNet;
-mutex mutexUpdateNet;
-//atomic_int mode{caffe::Caffe::mode()};
 
 namespace caffe {
-
-Caffe::Brew mode=Caffe::mode();
-
-template <typename Dtype>
-	void ReadDataFromDBandDistribute(Layer<Dtype>* layer, const int tid, const int endNum, const int childProcessSum){
-        	int startNum = 0;
-                int batchsize = layer->layer_param().data_param().batch_size();
-                int skip;
-                skip = (tid-1-tid/5)*batchsize;
- 		
-		Blob<Dtype> *prefetch_data_ = new Blob<Dtype>;
-		Blob<Dtype> *prefetch_label_ = new Blob<Dtype>;
-
-		shared_ptr<db::DB> db(db::GetDB(layer->layer_param().data_param().backend()));
-		db->Open(layer->layer_param().data_param().source(), db::READ);
-		shared_ptr<db::Cursor> cursor(db->NewCursor());
-		cursor->SeekToFirst();
-
-		bool output_label = layer->getOutputLabel();
-	
-		layer->reshapeData(*prefetch_data_, *prefetch_label_);
-		int skip1;
-                skip1 = (childProcessSum-1) * batchsize;
-		
-		for(int Num = startNum; Num < endNum; ++Num){
-			if(Num!= startNum)skip = skip1;
-			DBGPRT(LOG(INFO)<<"SKIP START "<< Num <<" " <<tid<<" "<<skip);
-#if 1
-			while (skip-- > 0) {
-				cursor->Next();
-				if(!(cursor->valid()))  cursor->SeekToFirst();
-			}
-#endif
-
-                	DBGPRT(LOG(INFO)<<"SKIP FIN READ START"<<Num<<" "<<tid); //gz cursor
-                	layer->ReadData(cursor, *prefetch_data_, *prefetch_label_);
-               	 	DBGPRT(LOG(INFO)<<"READ FIN SEND START"<<Num<<" "<<tid);
-
-#ifdef DIRECTGPU
-                	caffe_mpi_send<Dtype>(prefetch_data_->mutable_gpu_data(),prefetch_data_->count(),tid,TAG_DATA_OUT,MPI_COMM_WORLD);
-			if(output_label){
-				caffe_mpi_send<Dtype>(prefetch_label_->mutable_gpu_data(),prefetch_label_->count(),tid,TAG_DATA_OUT_IF,MPI_COMM_WORLD);
-			}
-#else
-			caffe_mpi_send<Dtype>(prefetch_data_->mutable_cpu_data(),prefetch_data_->count(),tid,TAG_DATA_OUT,MPI_COMM_WORLD);
-			if(output_label){
-				caffe_mpi_send<Dtype>(prefetch_label_->mutable_cpu_data(),prefetch_label_->count(),tid,TAG_DATA_OUT_IF,MPI_COMM_WORLD);
-			}
-#endif
-			DBGPRT(LOG(INFO)<<"SEND FIN"<<Num<<" "<<tid);
-		}
-	
-		delete prefetch_data_;
-		delete prefetch_label_;
-
-                LOG(INFO)<<"Read database thread out! Thread No."<<tid;
-	}
-
-template <typename Dtype>
-	void ComputeValueThreadServer( Solver<Dtype>* layer, const int childProcessSum) {
-	bool waitStatus;
-	while(true){
-		if(undoneIter <= 0)break;
-		{
-			waitStatus=false;
-			unique_lock<mutex> lk(mutexUpdateWeight);
-			
-#if 1
-			DBGPRT(LOG(INFO)<<"WAIT "<<currentUpdateCount);
-			waitStatus=condUpdateWeight.wait_for(lk,chrono::seconds(layer->param().timeout_sec()),[=](){return currentUpdateCount >= childProcessSum;});
-			if(waitStatus==false) LOG(INFO)<<"Timeout "<<currentUpdateCount;
-#else
-			condUpdateWeight.wait(lk,[=](){return currentUpdateCount >= childProcessSum || currentUpdateCount >= undoneIter;});//need test
-#endif
-
-			DBGPRT(LOG(INFO)<<"WAIT FIN"<<currentUpdateCount);
-			undoneIter -= currentUpdateCount;
-                        if(currentUpdateCount>0){
-				layer->ComputeValueServer();
-				DBGPRT(LOG(INFO)<<"CVS FIN"<<currentUpdateCount);
-				condUpdateNet.notify_all();
-			}
-		}
-	}
-}
-
-template <typename Dtype>
-	void Solver<Dtype>::ComputeValueServer(){
-		ComputeUpdateValue();
-		bool ifTest = ((iter_+currentUpdateCount)/param_.test_interval())  > (iter_ /param_.test_interval());
-		iter_ += currentUpdateCount;
-		if(ifTest) TestAll();
-		currentUpdateCount=0;
-	}
-        
-
-template <typename Dtype>
-	void ComputeValueThreadClient(Solver<Dtype>* solver, const int tid, const int endNum) {
-		int startNum = 0;
-                CHECK(solver);
-                for(int i=startNum; i < endNum; ++i){
-                	solver->ComputeValueClient(tid);
-                }
-                LOG(INFO)<<"Thread fin "<<tid;
-         }
-
-template <typename Dtype>
-	void Solver<Dtype>::ComputeValueClient(int tid){
-		int mpi_source,tid22;
-		tid22 = tid/4 + tid + 1;
-		ComputeUpdateValueClientThread(mpi_source,tid22,tid);
-		{
-			unique_lock<mutex> ul(mutexUpdateNet);
-			condUpdateNet.wait(ul, []{return currentUpdateCount == 0;});
-		}
-		
-		flagComputeEndNeedUpdate[tid]=0;
-		vector<shared_ptr<Blob<Dtype> > >& net_params = this->net_->params_nc();
-
-		for (int param_id = 0; param_id < net_params.size(); ++param_id) {
-                	gpu_sync();
-#ifdef DIRECTGPU
-			caffe_mpi_send<Dtype>(tempdata[tid][param_id]->mutable_gpu_data(),tempdata[tid][param_id]->count(),tid22,TAG_NET_OUT,MPI_COMM_WORLD);
-#else
-			caffe_mpi_send<Dtype>(tempdata[tid][param_id]->mutable_cpu_data(),tempdata[tid][param_id]->count(),tid22,TAG_NET_OUT,MPI_COMM_WORLD);
-#endif
-                 }
-         }
-
-
-template <typename Dtype>
-Dtype Solver<Dtype>::GetLearningRate() {
-  Dtype rate;
-  const string& lr_policy = this->param_.lr_policy();
-  if (lr_policy == "fixed") {
-    rate = this->param_.base_lr();
-  } else if (lr_policy == "step") {
-    this->current_step_ = this->iter_ / this->param_.stepsize();
-    rate = this->param_.base_lr() *
-        pow(this->param_.gamma(), this->current_step_);
-  } else if (lr_policy == "exp") {
-    rate = this->param_.base_lr() * pow(this->param_.gamma(), this->iter_);
-  } else if (lr_policy == "inv") {
-    rate = this->param_.base_lr() *
-        pow(Dtype(1) + this->param_.gamma() * this->iter_,
-            - this->param_.power());
-  } else if (lr_policy == "multistep") {
-    if (this->current_step_ < this->param_.stepvalue_size() &&
-          this->iter_ >= this->param_.stepvalue(this->current_step_)) {
-      this->current_step_++;
-      LOG(INFO) << "MultiStep Status: Iteration " <<
-      this->iter_ << ", step = " << this->current_step_;
-    }
-    rate = this->param_.base_lr() *
-        pow(this->param_.gamma(), this->current_step_);
-  } else if (lr_policy == "poly") {
-    rate = this->param_.base_lr() * pow(Dtype(1.) -
-        (Dtype(this->iter_) / Dtype(this->param_.max_iter())),
-        this->param_.power());
-  } else if (lr_policy == "sigmoid") {
-    rate = this->param_.base_lr() * (Dtype(1.) /
-        (Dtype(1.) + exp(-this->param_.gamma() * (Dtype(this->iter_) -
-          Dtype(this->param_.stepsize())))));
-  } else {
-    LOG(FATAL) << "Unknown learning rate policy: " << lr_policy;
-  }
-  return rate;
-}
-
-template <typename Dtype>
-	void Solver<Dtype>::ComputeUpdateValue() {
-		vector<shared_ptr<Blob<Dtype> > >& net_params = this->net_->params_nc();
-		const vector<float>& net_params_lr = this->net_->params_lr();
-		const vector<float>& net_params_weight_decay = this->net_->params_weight_decay();
-		Dtype rate = GetLearningRate();
-		Dtype momentum = this->param_.momentum();
-		Dtype weight_decay = this->param_.weight_decay();
-		string regularization_type = this->param_.regularization_type();
-  		Caffe::set_mode(Caffe::GPU); //without this, there will be a sigsegv
-
-		switch (Caffe::mode()) {
-		case Caffe::CPU:
-			for(int param_id = 0; param_id < net_params.size(); ++param_id){
-				memset(net_params[param_id]->mutable_cpu_diff(),0,sizeof(Dtype)*(net_params[param_id]->count()));
-			}
-			for(int i=0;i<this->childProcessSum;++i){
-				if(this->flagComputeEndNeedUpdate[i]==1){
-					for(int param_id = 0; param_id < net_params.size(); ++param_id){
-						caffe_axpy(net_params[param_id]->count(),(Dtype)1,this->tempdata[i][param_id]->mutable_cpu_data(),net_params[param_id]->mutable_cpu_diff());
-					}
-				}
-			}
-			
-			for (int param_id = 0; param_id < net_params.size(); ++param_id) {
-				caffe_scal(net_params[param_id]->count(),(Dtype)(1.0/currentUpdateCount),net_params[param_id]->mutable_cpu_diff());
-				// Compute the value to history, and then copy them to the blob's diff.
-				Dtype local_rate = rate * net_params_lr[param_id];
-				Dtype local_decay = weight_decay * net_params_weight_decay[param_id];
-				if (local_decay) {
-					if (regularization_type == "L2") {
-						caffe_axpy(net_params[param_id]->count(),local_decay,net_params[param_id]->cpu_data(),net_params[param_id]->mutable_cpu_diff());
-				} else if (regularization_type == "L1") {
-						caffe_cpu_sign(net_params[param_id]->count(),net_params[param_id]->cpu_data(),temp_[param_id]->mutable_cpu_data());
-						caffe_axpy(net_params[param_id]->count(),local_decay,temp_[param_id]->cpu_data(),net_params[param_id]->mutable_cpu_diff());
-				} else {
-	                                        LOG(FATAL) << "Unknown regularization type: " << regularization_type;
-                                       }
-				}
-	caffe_cpu_axpby(net_params[param_id]->count(), local_rate,net_params[param_id]->cpu_diff(), momentum,history_[param_id]->mutable_cpu_data());
-	caffe_copy(net_params[param_id]->count(),history_[param_id]->cpu_data(), net_params[param_id]->mutable_cpu_diff());
-		}
-		break;
-
-		 case Caffe::GPU:
-#ifndef CPU_ONLY
-		for(int param_id = 0; param_id < net_params.size(); ++param_id){
-			cudaMemset(net_params[param_id]->mutable_gpu_diff(),0,sizeof(Dtype)*(net_params[param_id]->count()));}
-
-		for(int i=0;i<this->childProcessSum;++i){
-			if(this->flagComputeEndNeedUpdate[i]==1){
-				for(int param_id = 0; param_id < net_params.size(); ++param_id){
-			caffe_gpu_axpy(net_params[param_id]->count(),(Dtype)1,this->tempdata[i][param_id]->mutable_gpu_data(),net_params[param_id]->mutable_gpu_diff());
-
-					}
-				}
-			}
-
-		for (int param_id = 0; param_id < net_params.size(); ++param_id) {
-			caffe_gpu_scal(net_params[param_id]->count(),(Dtype)(1.0/currentUpdateCount),net_params[param_id]->mutable_gpu_diff());
-			 Dtype local_rate = rate * net_params_lr[param_id];
-			Dtype local_decay = weight_decay * net_params_weight_decay[param_id];
-			if (local_decay) {
-				if (regularization_type == "L2") {
-				caffe_gpu_axpy(net_params[param_id]->count(),local_decay,net_params[param_id]->gpu_data(),net_params[param_id]->mutable_gpu_diff());
-			} else if (regularization_type == "L1") {
-				caffe_gpu_sign(net_params[param_id]->count(),net_params[param_id]->gpu_data(),temp_[param_id]->mutable_gpu_data());
-				 caffe_gpu_axpy(net_params[param_id]->count(),local_decay,temp_[param_id]->gpu_data(),net_params[param_id]->mutable_gpu_diff());
-			 } else {
-				LOG(FATAL) << "Unknown regularization type: " << regularization_type;
-			}
-		}
-		
-		caffe_gpu_axpby(net_params[param_id]->count(), local_rate,net_params[param_id]->gpu_diff(), momentum,history_[param_id]->mutable_gpu_data());
-		caffe_copy(net_params[param_id]->count(),history_[param_id]->gpu_data(),net_params[param_id]->mutable_gpu_diff());
-		}
-#else
-		NO_GPU;
-#endif
-		break;
-		
-	        default:
-                                        LOG(FATAL) << "Unknown caffe mode: " << Caffe::mode();
-                        }
-
-		this->net_->Update();
-                                for(int i=0;i<this->childProcessSum;++i){
-                                if(this->flagComputeEndNeedUpdate[i]==1){
-                                        for (int param_id = 0; param_id < net_params.size(); ++param_id) {
-
-			caffe_copy(net_params[param_id]->count(),net_params[param_id]->gpu_data(),this->tempdata[i][param_id]->mutable_gpu_data());
-				}
-			}
-
-		}
-	}
-
-
 
 template<typename Dtype>
 void Solver<Dtype>::SetActionFunction(ActionCallback func) {
@@ -319,14 +30,14 @@ SolverAction::Enum Solver<Dtype>::GetRequestedAction() {
 template <typename Dtype>
 Solver<Dtype>::Solver(const SolverParameter& param, const Solver* root_solver)
     : net_(), callbacks_(), root_solver_(root_solver),
-      requested_early_exit_(false) {
+      requested_early_exit_(false), iteration_timer_(), iterations_last_() {
   Init(param);
 }
 
 template <typename Dtype>
 Solver<Dtype>::Solver(const string& param_file, const Solver* root_solver)
     : net_(), callbacks_(), root_solver_(root_solver),
-      requested_early_exit_(false) {
+      requested_early_exit_(false), iteration_timer_(), iterations_last_() {
   SolverParameter param;
   ReadSolverParamsFromTextFileOrDie(param_file, &param);
   Init(param);
@@ -345,12 +56,7 @@ void Solver<Dtype>::Init(const SolverParameter& param) {
     Caffe::set_random_seed(param_.random_seed());
   }
   // Scaffolding code
-  int size;
-  MPI_Comm_rank (MPI_COMM_WORLD, &rank);
-  MPI_Comm_size (MPI_COMM_WORLD, &size);
-
   InitTrainNet();
-  // Set the correct NetState.  We start with the solver defaults (lowest
   if (Caffe::root_solver()) {
     InitTestNets();
     LOG(INFO) << "Solver scaffolding done.";
@@ -358,20 +64,6 @@ void Solver<Dtype>::Init(const SolverParameter& param) {
   iter_ = 0;
   current_step_ = 0;
 }
-
-template <typename Dtype>
-                void Solver<Dtype>::ComputeUpdateValueClientThread(int& mpi_source,int tid22,int tid){
-                        GetValue(mpi_source,tid22,tid);
-                }
-       template <typename Dtype>
-                void Solver<Dtype>::ComputeUpdateValueClient() {
-                        Dtype rate = GetLearningRate();
-                        if (this->param_.display() && this->iter_ % this->param_.display() == 0) {
-                                LOG(INFO) << "Iteration " << this->iter_ << ", lr = " << rate;
-                        }
-                }
-
-
 
 template <typename Dtype>
 void Solver<Dtype>::InitTrainNet() {
@@ -416,7 +108,6 @@ void Solver<Dtype>::InitTrainNet() {
   } else {
     net_.reset(new Net<Dtype>(net_param, root_solver_->net_.get()));
   }
-  // Set the correct NetState.  We start with the solver defaults (lowest
 }
 
 template <typename Dtype>
@@ -508,22 +199,34 @@ void Solver<Dtype>::Step(int iters) {
   int average_loss = this->param_.average_loss();
   losses_.clear();
   smoothed_loss_ = 0;
+  iteration_timer_.Start();
+
+  for (int i = 0; i < callbacks_.size(); ++i) {
+    // we need to sync all threads before starting, otherwise some cuda init,
+    // malloc or other cuda stuff could interlock with in-loop cuda GPU sync
+    // called in on_start.
+    callbacks_[i]->soft_barrier();
+    // Initial bcast of parameters
+    callbacks_[i]->on_start();
+  }
+
+  net_->SetSolver(this);
 
   while (iter_ < stop_iter) {
     // zero-init the params
     net_->ClearParamDiffs();
     if (param_.test_interval() && iter_ % param_.test_interval() == 0
-        && (iter_ > 0 || param_.test_initialization())
-        && Caffe::root_solver()) {
-      TestAll();
+        && (iter_ > 0 || param_.test_initialization())) {
+      if (Caffe::root_solver()) {
+      //  TestAll();
+      }
       if (requested_early_exit_) {
         // Break out of the while loop because stop was requested while testing.
         break;
       }
-    }
-
-    for (int i = 0; i < callbacks_.size(); ++i) {
-      callbacks_[i]->on_start();
+      for (int i = 0; i < callbacks_.size(); ++i) {
+        callbacks_[i]->soft_barrier();
+      }
     }
     const bool display = param_.display() && iter_ % param_.display() == 0;
     net_->set_debug_info(display && param_.debug_info());
@@ -536,8 +239,13 @@ void Solver<Dtype>::Step(int iters) {
     // average the loss across iterations for smoothed reporting
     UpdateSmoothedLoss(loss, start_iter, average_loss);
     if (display) {
+      float lapse = iteration_timer_.Seconds();
+      float per_s = (iter_ - iterations_last_) / (lapse ? lapse : 1);
       LOG_IF(INFO, Caffe::root_solver()) << "Iteration " << iter_
-          << ", loss = " << smoothed_loss_;
+          << " (" << per_s << " iter/s, " << lapse << "s/"
+          << param_.display() <<" iter), loss = " << smoothed_loss_;
+      iteration_timer_.Start();
+      iterations_last_ = iter_;
       const vector<Blob<Dtype>*>& result = net_->output_blobs();
       int score_index = 0;
       for (int j = 0; j < result.size(); ++j) {
@@ -558,9 +266,17 @@ void Solver<Dtype>::Step(int iters) {
         }
       }
     }
+#ifndef CPU_ONLY
+    CUDA_CHECK(cudaStreamSynchronize(cudaStreamDefault));
+#endif
     for (int i = 0; i < callbacks_.size(); ++i) {
-      callbacks_[i]->on_gradients_ready();
+      callbacks_[i]->allreduce();
     }
+    // Make sure all gradient exchanges have finished in per-level scheme
+    for (int i = 0; i < callbacks_.size(); ++i) {
+      callbacks_[i]->syncCommStream();
+    }
+
     ApplyUpdate();
 
     // Increment the internal iter_ counter -- its value should always indicate
@@ -589,189 +305,49 @@ void Solver<Dtype>::Solve(const char* resume_file) {
   CHECK(Caffe::root_solver());
   LOG(INFO) << "Solving " << net_->name();
   LOG(INFO) << "Learning Rate Policy: " << param_.lr_policy();
-  vector<shared_ptr<Blob<Dtype> > >& net_params = this->net_->params_nc();
-if(rank == 0){
-                          history_.clear();
-                        update_.clear();
-                        temp_.clear();
-                        for (int i = 0; i < net_params.size(); ++i) {
-                                const Blob<Dtype>* net_param = net_params[i].get();
-                                history_.push_back(shared_ptr<Blob<Dtype> >(new Blob<Dtype>(net_param->num(), net_param->channels(), net_param->height(),net_param->width())));
-				update_.push_back(shared_ptr<Blob<Dtype> >(new Blob<Dtype>(net_param->num(), net_param->channels(), net_param->height(),net_param->width())));
-				temp_.push_back(shared_ptr<Blob<Dtype> >(new Blob<Dtype>(net_param->num(), net_param->channels(), net_param->height(),net_param->width())));
-}
-
-}
-
 
   // Initialize to false every time we start solving.
   requested_early_exit_ = false;
 
-iter_ = 0;
   if (resume_file) {
     LOG(INFO) << "Restoring previous solver status from " << resume_file;
     Restore(resume_file);
   }
 
-int msize;
-        MPI_Comm_size (MPI_COMM_WORLD, &msize);
-childProcessSum = msize-1-(msize-1)/5;
-        undoneIter = param_.max_iter() - iter_;
-if(rank==0){
-  LOG(INFO) << "Learning Rate Policy: "  ;
-          flagComputeEndNeedUpdate=new int[childProcessSum]();
-          tempdata= new Bloblite<Dtype> **[childProcessSum];
-          for(int i=0;i<childProcessSum;++i){
-                tempdata[i]=new Bloblite<Dtype>* [net_params.size()];
-                for(int j=0;j<net_params.size();++j){
-                        tempdata[i][j]= new Bloblite<Dtype>(net_params[j]->count());
-                }
-          }
+  // For a network that is trained by the solver, no bottom or top vecs
+  // should be given, and we will just provide dummy vecs.
+  int start_iter = iter_;
+  Step(param_.max_iter() - iter_);
+  // If we haven't already, save a snapshot after optimization, unless
+  // overridden by setting snapshot_after_train := false
+  if (param_.snapshot_after_train()
+      && (!param_.snapshot() || iter_ % param_.snapshot() != 0)) {
+    Snapshot();
   }
- MPI_Barrier(MPI_COMM_WORLD);
-//if(rank==0) Step(param_.max_iter() - iter_);
+  if (requested_early_exit_) {
+    LOG(INFO) << "Optimization stopped early.";
+    return;
+  }
+  // After the optimization is done, run an additional train and test pass to
+  // display the train and test loss/outputs if appropriate (based on the
+  // display and test_interval settings, respectively).  Unlike in the rest of
+  // training, for the train net we only run a forward pass as we've already
+  // updated the parameters "max_iter" times -- this final pass is only done to
+  // display the loss, which is computed in the forward pass.
+  if (param_.display() && iter_ % param_.display() == 0) {
+    int average_loss = this->param_.average_loss();
+    Dtype loss;
+    net_->Forward(&loss);
 
-if(rank==0){
-    int itSize = param_.max_iter() / childProcessSum;
-    int tailSize = param_.max_iter() % childProcessSum;
-    std::thread threadServer(&ComputeValueThreadServer<Dtype>,this,childProcessSum);
-    vector<thread> threadClientUpdate(childProcessSum);
-    int sizeRel = 4<childProcessSum ? 4:childProcessSum;
-    for(int i=0;i<childProcessSum;++i){
-                threadClientUpdate[i] = std::thread(&ComputeValueThreadClient<Dtype>,this,i,(i<tailSize ? itSize +1:itSize));
-         }
+    UpdateSmoothedLoss(loss, start_iter, average_loss);
 
-    vector<thread> threadRead(sizeRel);
-
-
-for(int i=0;i< sizeRel;++i){
-        threadRead[i] = std::thread(&ReadDataFromDBandDistribute<Dtype>,net_->layers().at(0).get(),
-                                   i+1,(i<tailSize ? itSize +1:itSize),childProcessSum);
-    }
-    for(int i=0;i<sizeRel;++i){
-      threadRead[i].join();
-    }
-    for(int i=0;i<childProcessSum;++i)
-      threadClientUpdate[i].join();
-    threadServer.join();
-    threadClientUpdate.clear();
-    threadRead.clear();
- }
-else if(rank%5==0)
-{
-    int itSize = param_.max_iter() / childProcessSum;
-    int tailSize = param_.max_iter() % childProcessSum;
-    int sizeMax = (rank/5+1)*4;
-    int sizeRel = sizeMax<childProcessSum ? 4:childProcessSum+4-sizeMax;
-  vector<thread> threadRead(sizeRel);
-   for(int i=0;i< sizeRel;++i){
-        threadRead[i] = std::thread(&ReadDataFromDBandDistribute<Dtype>,net_->layers().at(0).get(),
-                                   i+rank+1,(i<tailSize ? itSize +1:itSize),childProcessSum);
-    }
-    for(int i=0;i<sizeRel;++i){
-      threadRead[i].join();
-    }
-
-}
-else{// slave processes
-        int iterSize;
-        iterSize = param_.max_iter() / childProcessSum;
-        int tailtSize;
-        tailtSize = param_.max_iter() % childProcessSum;
-        int startNum,endNum;
-        startNum = 0;
-        endNum = iterSize;
-        if(tailtSize >= rank) ++endNum;
-for(int i=startNum; i< endNum; ++i){
-                MPI_Status status;
-                status.MPI_ERROR=0;
-iter_ = (rank - rank/5 - 1) + i * childProcessSum;
-//net_->taskiter = iter_;
-                DBGPRT(LOG(INFO)<<"FB START "<<i<<" "<<iter_);
-net_->ClearParamDiffs();
-Dtype loss = net_->ForwardBackward();
-DBGPRT(LOG(INFO)<<"FB FIN CUVC START "<<i<<" "<<iter_);
-ComputeUpdateValueClient();
-DBGPRT(LOG(INFO)<<"CUVC FIN RECV NET START "<<i<<" "<<iter_);
-                vector<shared_ptr<Blob<Dtype> > >& net_params = this->net_->params_nc();
-
-#ifdef DIRECTGPU
-   for (int param_id = 0; param_id < net_params.size(); ++param_id) {
-             caffe_mpi_recv<Dtype>(net_params[param_id]->mutable_gpu_data(),net_params[param_id]->count(),0,TAG_NET_OUT,MPI_COMM_WORLD,&status);
-         }
-#else
-     for (int param_id = 0; param_id < net_params.size(); ++param_id) {
-             caffe_mpi_recv<Dtype>(net_params[param_id]->mutable_cpu_data(),net_params[param_id]->count(),0,TAG_NET_OUT,MPI_COMM_WORLD,&status);
-        }
-#endif
-
-  DBGPRT(LOG(INFO)<<"RECV NET FIN "<<i<<" "<<iter_);
-if (param_.snapshot() && iter_ > startNum &&
-                                                        iter_ % param_.snapshot() == 0) {
-                                                Snapshot();
-                                        }
-                                        const bool display = param_.display() && iter_ % param_.display() == 0;
-                                        net_->set_debug_info(display && param_.debug_info());
-                                        if (display) {
-                                                LOG(INFO) << "Iteration " << iter_ << ", loss = " << loss;
-                                                const vector<Blob<Dtype>*>& result = net_->output_blobs();
-                                                int score_index = 0;
-                                                for (int j = 0; j < result.size(); ++j) {
-                                                        const Dtype* result_vec = result[j]->cpu_data();
-                                                        const string& output_name =
-                                                                net_->blob_names()[net_->output_blob_indices()[j]];
-                                                        const Dtype loss_weight =
-                                                                net_->blob_loss_weights()[net_->output_blob_indices()[j]];
-                                                        for (int k = 0; k < result[j]->count(); ++k) {
-                                                                ostringstream loss_msg_stream;
-                                                                if (loss_weight) {
-                                                                        loss_msg_stream << " (* " << loss_weight
-                                                                                << " = " << loss_weight * result_vec[k] << " loss)";
-                                                                }
-LOG(INFO) << "    Train net output #"
-                                                                        << score_index++ << ": " << output_name << " = "
-                                                                        << result_vec[k] << loss_msg_stream.str();
-                                                        }
-                                                }
-                                        }
-                                }
-
-
-}
-
- MPI_Barrier(MPI_COMM_WORLD);
-  if(rank==0){
-
-        if (param_.snapshot_after_train()
-          && (!param_.snapshot() || iter_ % param_.snapshot() != 0)) {
-        Snapshot();
-        }
-        if (requested_early_exit_) {
-        LOG(INFO) << "Optimization stopped early.";
-        return;
-        }
-        // After the optimization is done, run an additional train and test pass to
-        //         // display the train and test loss/outputs if appropriate (based on the
-        //                 // display and test_interval settings, respectively).  Unlike in the rest of
-        //                         // training, for the train net we only run a forward pass as we've already
-        //                                 // updated the parameters "max_iter" times -- this final pass is only done to
-        //                                         // display the loss, which is computed in the forward pass.
-        vector<Blob<Dtype>*> bottom_vec;
-        if (param_.display() && iter_ % param_.display() == 0) {
-                       Dtype loss;
-              // net_->taskiter = 0;
-               net_->ForwardTest(bottom_vec, &loss);
-               LOG(INFO) << "Iteration " << iter_ << ", loss = " << loss;
-        }
-        if (param_.test_interval() && iter_ % param_.test_interval() == 0) {
-                                         TestAll();
-		}	
-if (param_.test_interval() && iter_ % param_.test_interval() == 0) {
-        TestAll();
-        }
-        LOG(INFO) << "Optimization Done.";
-        }
-
+    LOG(INFO) << "Iteration " << iter_ << ", loss = " << smoothed_loss_;
+  }
+  if (param_.test_interval() && iter_ % param_.test_interval() == 0) {
+    TestAll();
+  }
+ // if(id_local==0)
+  LOG(INFO) << "Optimization Done.";
 }
 
 template <typename Dtype>
@@ -792,7 +368,6 @@ void Solver<Dtype>::Test(const int test_net_id) {
       ShareTrainedLayersWith(net_.get());
   vector<Dtype> test_score;
   vector<int> test_score_output_id;
-vector<Blob<Dtype>*> bottom_vec;
   const shared_ptr<Net<Dtype> >& test_net = test_nets_[test_net_id];
   Dtype loss = 0;
   for (int i = 0; i < param_.test_iter(test_net_id); ++i) {
@@ -810,9 +385,10 @@ vector<Blob<Dtype>*> bottom_vec;
       // break out of test loop.
       break;
     }
+
     Dtype iter_loss;
     const vector<Blob<Dtype>*>& result =
-        test_net->ForwardTest(bottom_vec,&iter_loss);
+        test_net->Forward(&iter_loss);
     if (param_.test_compute_loss()) {
       loss += iter_loss;
     }
@@ -943,38 +519,6 @@ void Solver<Dtype>::UpdateSmoothedLoss(Dtype loss, int start_iter,
     losses_[idx] = loss;
   }
 }
-
-template <typename Dtype>
-                void Solver<Dtype>::GetValue(int &mpi_source,const int tid22,int tid) {
-                        MPI_Status status;
-                        vector<shared_ptr<Blob<Dtype> > >& net_params = this->net_->params_nc();
-for (int param_id = net_params.size()-1; param_id >= 0; --param_id)
-                                        caffe_mpi_recv<Dtype>(this->tempdata[tid][param_id]->mutable_gpu_data(),net_params[param_id]->count(),tid22,TAG_UPDATE,MPI_COMM_WORLD,&status);
-{
-                                unique_lock<mutex> lk(mutexUpdateWeight);
-                                this->flagComputeEndNeedUpdate[tid] = 1;
- 				++currentUpdateCount;
-                                condUpdateWeight.notify_all();
-                        }
-}
-
-template <typename Dtype>
-                Solver<Dtype>::~Solver(){
-                        if(this->rank==0){
-                                delete [] this->flagComputeEndNeedUpdate;
-                                vector<shared_ptr<Blob<Dtype> > >& net_params = this->net_->params_nc();
-                                for(int i=0;i<this->childProcessSum;++i){
-                                        for(int j=0;j<net_params.size();++j)
-                                                delete this->tempdata[i][j];
-                                        delete[] this->tempdata[i];
-                                }
-                                delete [] this->tempdata;
-                        }else{
-                        }
-                }
-
-
-
 
 INSTANTIATE_CLASS(Solver);
 

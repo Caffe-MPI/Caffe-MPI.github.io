@@ -2,7 +2,7 @@
 #include <map>
 #include <string>
 #include <vector>
-
+#include "caffe/inspur.h"
 #include "caffe/common.hpp"
 #include "caffe/data_reader.hpp"
 #include "caffe/layers/data_layer.hpp"
@@ -43,18 +43,19 @@ DataReader::~DataReader() {
 
 DataReader::QueuePair::QueuePair(int size) {
   // Initialize the free queue with requested number of datums
+
   for (int i = 0; i < size; ++i) {
-    free_.push(new Datum());
+    free_.push(new string());
   }
 }
 
 DataReader::QueuePair::~QueuePair() {
-  Datum* datum;
-  while (free_.try_pop(&datum)) {
-    delete datum;
+  string* str;
+  while (free_.try_pop(&str)) {
+    delete str;
   }
-  while (full_.try_pop(&datum)) {
-    delete datum;
+  while (full_.try_pop(&str)) {
+    delete str;
   }
 }
 
@@ -74,9 +75,12 @@ void DataReader::Body::InternalThreadEntry() {
   shared_ptr<db::DB> db(db::GetDB(param_.data_param().backend()));
   db->Open(param_.data_param().source(), db::READ);
   shared_ptr<db::Cursor> cursor(db->NewCursor());
+  for (int i=0;i<inspur::id_local;i++)cursor->Next();
+
   vector<shared_ptr<QueuePair> > qps;
   try {
     int solver_count = param_.phase() == TRAIN ? Caffe::solver_count() : 1;
+    printf("solver %d %d",solver_count,Caffe::solver_count());
 
     // To ensure deterministic runs, only start running once all solvers
     // are ready. But solvers need to peek on one item during initialization,
@@ -103,16 +107,17 @@ void DataReader::Body::InternalThreadEntry() {
 }
 
 void DataReader::Body::read_one(db::Cursor* cursor, QueuePair* qp) {
-  Datum* datum = qp->free_.pop();
-  // TODO deserialize in-place instead of copy?
-  datum->ParseFromString(cursor->value());
+  string* datum = qp->free_.pop();
+  *datum = cursor->value();
   qp->full_.push(datum);
 
   // go to the next iter
+  for(int i=0;i<inspur::global_size;i++)
   cursor->Next();
   if (!cursor->valid()) {
     DLOG(INFO) << "Restarting data prefetching from start.";
     cursor->SeekToFirst();
+    for (int i=0;i<inspur::id_local;i++)cursor->Next();
   }
 }
 

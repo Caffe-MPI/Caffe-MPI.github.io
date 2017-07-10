@@ -10,7 +10,6 @@
 #include "caffe/layer_factory.hpp"
 #include "caffe/proto/caffe.pb.h"
 #include "caffe/util/math_functions.hpp"
-#include "caffe/util/db.hpp"
 
 /**
  Forward declare boost::thread instead of including boost/thread.hpp
@@ -151,16 +150,6 @@ class Layer {
    */
   inline Dtype Forward(const vector<Blob<Dtype>*>& bottom,
       const vector<Blob<Dtype>*>& top);
-int taskiter;
-  inline Dtype ForwardTest(const vector<Blob<Dtype>*>& bottom,
-     const vector<Blob<Dtype>*>& top);
-  virtual void Forward_cpu_test(const vector<Blob<Dtype>*>& bottom,
-      const vector<Blob<Dtype>*>& top){;};
-  virtual void Forward_gpu_test(const vector<Blob<Dtype>*>& bottom,
-      const vector<Blob<Dtype>*>& top) {
-   return Forward_cpu_test(bottom, top);
-  }
-
 
   /**
    * @brief Given the top blob error gradients, compute the bottom blob error
@@ -326,11 +315,8 @@ int taskiter;
     }
     param_propagate_down_[param_id] = value;
   }
- virtual void reshapeData(Blob<Dtype>& lprefetch_data_ , Blob<Dtype>& lprefetch_label_){;}
 
- virtual void ReadData(shared_ptr<db::Cursor>& cursor, Blob<Dtype>& lprefetch_data_, Blob<Dtype>& lprefetch_label_){;}
 
- virtual bool getOutputLabel(){return false;} 
  protected:
   /** The protobuf that stores the layer parameters */
   LayerParameter layer_param_;
@@ -355,7 +341,7 @@ int taskiter;
   virtual void Forward_gpu(const vector<Blob<Dtype>*>& bottom,
       const vector<Blob<Dtype>*>& top) {
     // LOG(WARNING) << "Using CPU code as backup.";
-    return Forward_cpu(bottom, top);
+    Forward_cpu(bottom, top);
   }
 
   /**
@@ -454,9 +440,6 @@ int taskiter;
   void Lock();
   /** Unlock forward_mutex_ if this layer is shared */
   void Unlock();
- public:
-  Blob<Dtype> transformed_data_;
-  Blob<Dtype> transformed_label_;
 
   DISABLE_COPY_AND_ASSIGN(Layer);
 };  // class Layer
@@ -529,42 +512,6 @@ void Layer<Dtype>::ToProto(LayerParameter* param, bool write_diff) {
     blobs_[i]->ToProto(param->add_blobs(), write_diff);
   }
 }
-
-template <typename Dtype>
-inline Dtype Layer<Dtype>::ForwardTest(const vector<Blob<Dtype>*>& bottom,
-    const vector<Blob<Dtype>*>& top) {
-  Dtype loss = 0;
-  switch (Caffe::mode()) {
-  case Caffe::CPU:
-    Forward_cpu_test(bottom, top);
-    for (int top_id = 0; top_id < top.size(); ++top_id) {
-      if (!this->loss(top_id)) { continue; }
-      const int count = (top)[top_id]->count();
-      const Dtype* data = (top)[top_id]->cpu_data();
-      const Dtype* loss_weights = (top)[top_id]->cpu_diff();
-      loss += caffe_cpu_dot(count, data, loss_weights);
-    }
-    break;
-  case Caffe::GPU:
-    Forward_gpu_test(bottom, top);
-#ifndef CPU_ONLY
-    for (int top_id = 0; top_id < top.size(); ++top_id) {
-      if (!this->loss(top_id)) { continue; }
-      const int count = (top)[top_id]->count();
-      const Dtype* data = (top)[top_id]->gpu_data();
-      const Dtype* loss_weights = (top)[top_id]->gpu_diff();
-      Dtype blob_loss = 0;
-      caffe_gpu_dot(count, data, loss_weights, &blob_loss);
-      loss += blob_loss;
-    }
-#endif
-    break;
-  default:
-    LOG(FATAL) << "Unknown caffe mode.";
-  }
-  return loss;
-}
-
 
 }  // namespace caffe
 

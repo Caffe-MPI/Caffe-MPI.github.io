@@ -2,14 +2,22 @@
 #ifndef CAFFE_UTIL_DB_LMDB_HPP
 #define CAFFE_UTIL_DB_LMDB_HPP
 
+#include <stdint.h>
 #include <string>
 #include <vector>
-
 #include "lmdb.h"
-
+//#include "caffe/inspur.h"
 #include "caffe/util/db.hpp"
 
 namespace caffe { namespace db {
+
+#if UINTPTR_MAX == 0xffffffffUL
+/* 32-bit, 1GB */
+    static const size_t LMDB_MAP_SIZE = 1073741824UL;
+#else
+/* 64-bit, 1TB */
+    static const size_t LMDB_MAP_SIZE = 1099511627776ULL;
+#endif
 
 inline void MDB_CHECK(int mdb_status) {
   CHECK_EQ(mdb_status, MDB_SUCCESS) << mdb_strerror(mdb_status);
@@ -27,9 +35,24 @@ class LMDBCursor : public Cursor {
   }
   virtual void SeekToFirst() { Seek(MDB_FIRST); }
   virtual void Next() { Seek(MDB_NEXT); }
+  virtual void Last() {Seek(MDB_LAST);}
+  virtual void Set(MDB_val *key) {Set(MDB_SET_RANGE, key);}
+  virtual size_t Kkey() {
+//    return string(static_cast<const char*>(mdb_key_.mv_data));
+     return mdb_key_.mv_size;
+//      return string((mdb_key_.mv_size));
+ }
+  virtual void *KKkey() {
+//    return string(static_cast<const char*>(mdb_key_.mv_data));
+     return mdb_key_.mv_data;
+//      return string((mdb_key_.mv_size));
+ }
+
   virtual string key() {
-    return string(static_cast<const char*>(mdb_key_.mv_data), mdb_key_.mv_size);
-  }
+//    return string(static_cast<const char*>(mdb_key_.mv_data));
+     return string(static_cast<const char*>(mdb_key_.mv_data), mdb_key_.mv_size); 
+//      return string((mdb_key_.mv_size));
+ }
   virtual string value() {
     return string(static_cast<const char*>(mdb_value_.mv_data),
         mdb_value_.mv_size);
@@ -46,6 +69,16 @@ class LMDBCursor : public Cursor {
       valid_ = true;
     }
   }
+  void Set(MDB_cursor_op op,MDB_val *key) {
+    int mdb_status = mdb_cursor_get(mdb_cursor_, key, &mdb_value_, op);
+    if (mdb_status == MDB_NOTFOUND) {
+      valid_ = false;
+    } else {
+      MDB_CHECK(mdb_status);
+      valid_ = true;
+    }
+  }
+
 
   MDB_txn* mdb_txn_;
   MDB_cursor* mdb_cursor_;

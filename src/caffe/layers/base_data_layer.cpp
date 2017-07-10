@@ -63,6 +63,7 @@ void BasePrefetchingDataLayer<Dtype>::LayerSetUp(
       if (this->output_labels_) {
         prefetch_[i].label_.mutable_gpu_data();
       }
+      CUDA_CHECK(cudaEventCreate(&prefetch_[i].copied_));
     }
   }
 #endif
@@ -74,20 +75,18 @@ void BasePrefetchingDataLayer<Dtype>::LayerSetUp(
 
 template <typename Dtype>
 void BasePrefetchingDataLayer<Dtype>::InternalThreadEntry() {
-#ifndef CPU_ONLY
-  cudaStream_t stream;
-  if (Caffe::mode() == Caffe::GPU) {
-    CUDA_CHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
-  }
-#endif
-
   try {
     while (!must_stop()) {
       Batch<Dtype>* batch = prefetch_free_.pop();
       load_batch(batch);
 #ifndef CPU_ONLY
       if (Caffe::mode() == Caffe::GPU) {
-        batch->data_.data().get()->async_gpu_push(stream);
+        batch->data_.data()->async_gpu_push();
+        if (this->output_labels_) {
+            batch->label_.data()->async_gpu_push();
+        }
+        cudaStream_t stream = batch->data_.data()->stream();
+        CUDA_CHECK(cudaEventRecord(batch->copied_, stream));
         CUDA_CHECK(cudaStreamSynchronize(stream));
       }
 #endif
@@ -96,11 +95,6 @@ void BasePrefetchingDataLayer<Dtype>::InternalThreadEntry() {
   } catch (boost::thread_interrupted&) {
     // Interrupted exception is expected on shutdown
   }
-#ifndef CPU_ONLY
-  if (Caffe::mode() == Caffe::GPU) {
-    CUDA_CHECK(cudaStreamDestroy(stream));
-  }
-#endif
 }
 
 template <typename Dtype>
@@ -109,7 +103,6 @@ void BasePrefetchingDataLayer<Dtype>::Forward_cpu(
   Batch<Dtype>* batch = prefetch_full_.pop("Data layer prefetch queue empty");
   // Reshape to loaded data.
   top[0]->ReshapeLike(batch->data_);
-
   // Copy the data
   caffe_copy(batch->data_.count(), batch->data_.cpu_data(),
              top[0]->mutable_cpu_data());
@@ -125,39 +118,8 @@ void BasePrefetchingDataLayer<Dtype>::Forward_cpu(
   prefetch_free_.push(batch);
 }
 
-template <typename Dtype>
-void BasePrefetchingDataLayer<Dtype>::Forward_cpu_test(
-    const vector<Blob<Dtype>*>& bottom,const vector<Blob<Dtype>*>& top) {
-  JoinPrefetchThread();
-  caffe_copy(prefetch_data_.count(), prefetch_data_.cpu_data(),
-             (top)[0]->mutable_cpu_data());
-  if (this->output_labels_) {
-    caffe_copy(prefetch_label_.count(), prefetch_label_.cpu_data(),
-               (top)[1]->mutable_cpu_data());
-  }
-  CreatePrefetchThread();
-}
-
-
-template <typename Dtype>
-void BasePrefetchingDataLayer<Dtype>::CreatePrefetchThread() {
-//  this->phase_ =static_cast<caffe::Phase>( Caffe::phase());
-  this->data_transformer_->InitRand();
-//  CHECK(StartInternalThread()) << "Thread execution failed";
-  StartInternalThread();
-  }
-
-template <typename Dtype>
-void BasePrefetchingDataLayer<Dtype>::JoinPrefetchThread() {
-     CHECK(WaitForInternalThreadToExit()) << "Thread joining failed";
-}
-
-
 #ifdef CPU_ONLY
 STUB_GPU_FORWARD(BasePrefetchingDataLayer, Forward);
-template <typename Dtype> \
-void BasePrefetchingDataLayer<Dtype>::Forward_gpu_test(const vector<Blob<Dtype>*>& bottom, \
-const    vector<Blob<Dtype>*>& top) { NO_GPU; }
 #endif
 
 INSTANTIATE_CLASS(BaseDataLayer);

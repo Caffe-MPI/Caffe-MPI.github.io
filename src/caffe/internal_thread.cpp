@@ -62,17 +62,5 @@ void InternalThread::StopInternalThread() {
     }
   }
 }
-bool InternalThread::WaitForInternalThreadToExit() {
-  if (is_started()) {
-     thread_->interrupt();
-    try {
-      thread_->join();
-    } catch (...) {
-      return false;
-    }
-  }
-  return true;
-}
-
 
 }  // namespace caffe

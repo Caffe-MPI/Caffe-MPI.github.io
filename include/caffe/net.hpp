@@ -11,9 +11,122 @@
 #include "caffe/common.hpp"
 #include "caffe/layer.hpp"
 #include "caffe/proto/caffe.pb.h"
-#include "caffe/util/mpi.hpp"
+
+#ifdef USE_NCCL
+#include "caffe/util/nccl.hpp"
+#endif
+
+//#include <queue>
+//#include <functional>
+//#include <thread>
+//#include <memory>
+//#include <condition_variable>
 
 namespace caffe {
+/*
+class ThreadForMPI {
+ private:
+    std::queue< std::function< void() > > tasks_;
+    std::shared_ptr<std::thread> thread_;
+    //std::thread* thread_;
+
+        std::mutex mutex_;
+        std::condition_variable condition_;
+        std::condition_variable completed_;
+
+    std::size_t available_;
+    std::size_t total_;
+
+    bool running_;
+    bool complete_;
+
+ public:
+    explicit ThreadForMPI(std::size_t task_size)
+        : running_(true), complete_(true),
+          available_(0), total_(task_size)  {
+        // Need to be changed for there is only one thread.
+            thread_.reset(new std::thread(std::bind(&ThreadForMPI::main_loop_for_mpi, this)));
+            //thread_ = new std::thread(std::bind(&ThreadForMPI::main_loop_for_mpi, this));
+    }
+    ~ThreadForMPI() {
+        // Set running flag to false.
+        {
+            std::unique_lock< std::mutex > lock(mutex_);
+            running_ = false;
+            condition_.notify_one();
+        }
+
+        try {
+            thread_->join();
+            //printf("ThreadForMPI destroyed!\n");
+        }
+        // Suppress all exceptions.
+        catch (const std::exception&) {}
+    }
+        /// @brief Add task to the thread.
+    template <typename Task>
+    void runTask(Task task) {
+        std::unique_lock<std::mutex> lock(mutex_);
+        // Set task and signal condition variable so that a worker thread will
+        // wake up and use the task.
+        tasks_.push(std::function<void()>(task));
+        printf("Hello in runTask\n");
+        complete_ = false;
+        condition_.notify_one();
+    }
+
+    /// @brief Wait for queue to be empty
+    void waitMPIComplete() {
+        std::unique_lock<std::mutex> lock(mutex_);
+        if (!complete_)
+            completed_.wait(lock);
+    }
+
+ private:
+    /// @brief Entry point for the mpi communication thread.
+    void main_loop_for_mpi() {
+        while (running_) {
+            // Wait on condition variable while the task is empty and
+            // the thread is still running.
+
+            std::unique_lock<std::mutex> lock(mutex_);
+            while (tasks_.empty() && running_) {
+                condition_.wait(lock);
+            }
+
+            // If pool is no longer running, break out of loop.
+            if (!running_) break;
+
+            {
+
+                std::function< void() > task = tasks_.front();
+                tasks_.pop();
+
+                lock.unlock();
+
+                // Run the task.
+                try {
+                    task();
+                }
+                // Suppress all exceptions.
+                catch ( const std::exception& ) {}
+
+                lock.lock();
+
+                // Increment count, indicating thread is available.
+                ++available_;
+                if (tasks_.empty() && available_ == total_) {
+                    complete_ = true;
+                    completed_.notify_one();
+                }
+            }
+        }  // while running_
+    }
+};
+*/
+
+template <typename Dtype>
+class Solver;
 
 /**
  * @brief Connects Layer%s together into a directed acyclic graph (DAG)
@@ -26,7 +139,6 @@ class Net {
  public:
   explicit Net(const NetParameter& param, const Net* root_net = NULL);
   explicit Net(const string& param_file, Phase phase,
-      const int level = 0, const vector<string>* stages = NULL,
       const Net* root_net = NULL);
   virtual ~Net() {}
 
@@ -38,13 +150,6 @@ class Net {
    *
    */
   const vector<Blob<Dtype>*>& Forward(Dtype* loss = NULL);
-
- int taskiter;
- const vector<Blob<Dtype>*>& ForwardTest(const vector<Blob<Dtype>* > & bottom,
-      Dtype* loss = NULL);
-  const vector<Blob<Dtype>*>& ForwardPrefilledTest(Dtype* loss = NULL);
-
-
   /// @brief DEPRECATED; use Forward() instead.
   const vector<Blob<Dtype>*>& ForwardPrefilled(Dtype* loss = NULL) {
     LOG_EVERY_N(WARNING, 1000) << "DEPRECATED: ForwardPrefilled() "
@@ -128,6 +233,16 @@ class Net {
   /// @brief Writes the net to an HDF5 file.
   void ToHDF5(const string& filename, bool write_diff = false) const;
 
+  /// @mixed communication with nccl and mpi
+  //void MixedNcclMPIAllReduce(const int i);
+
+  void allreduce_per_param(Solver<Dtype>* asolver_, const int param_id_);
+  void nccl_mpi_comm_per_param(Solver<Dtype>* asolver,
+                    const int param_id,
+                    ncclComm_t nccl_comm,
+                    cudaStream_t comm_stream,
+                    bool root_solver);
+
   /// @brief returns the network name.
   inline const string& name() const { return name_; }
   /// @brief returns the layer names
@@ -183,9 +298,6 @@ class Net {
   inline const vector<shared_ptr<Blob<Dtype> > >& params() const {
     return params_;
   }
-  inline vector<shared_ptr<Blob<Dtype> > > &params_nc() {
-        return params_;
-  }
   inline const vector<Blob<Dtype>*>& learnable_params() const {
     return learnable_params_;
   }
@@ -239,6 +351,11 @@ class Net {
   static bool StateMeetsRule(const NetState& state, const NetStateRule& rule,
       const string& layer_name);
 
+  /// @brief set a Solver for this net
+  void SetSolver(Solver<Dtype>* s) {
+    solver_ = s;
+  }
+
  protected:
   // Helpers for Init.
   /// @brief Append a new top blob to the net.
@@ -290,6 +407,8 @@ class Net {
   vector<int> param_owners_;
   vector<string> param_display_names_;
   vector<pair<int, int> > param_layer_indices_;
+  /// (layer, blob) -> param_id map
+  map<pair<int, int>, int> layer_index_params_;
   map<string, int> param_names_index_;
   /// blob indices for the input and the output of the net
   vector<int> net_input_blob_indices_;
@@ -319,6 +438,8 @@ class Net {
   bool debug_info_;
   /// The root net that actually holds the shared layers in data parallelism
   const Net* const root_net_;
+  /// Pointer to the solver being used with this net
+  Solver<Dtype>* solver_;
   DISABLE_COPY_AND_ASSIGN(Net);
 };
 
