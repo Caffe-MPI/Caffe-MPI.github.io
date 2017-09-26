@@ -1,0 +1,22 @@
+{
+    "creation time": "2016-06-17 17:33:17.589011",
+    "dataset_id": "20160617-172855-e351",
+    "deploy file": "deploy.prototxt",
+    "framework": "caffe",
+    "id": "20160617-173317-3f6c",
+    "image dimensions": [
+        28,
+        28,
+        1
+    ],
+    "image resize mode": "squash",
+    "job id": "20160617-173317-3f6c",
+    "labels file": "labels.txt",
+    "mean file": "mean.binaryproto",
+    "name": "lenet-noval",
+    "snapshot file": "snapshot_iter_28140.caffemodel",
+    "solver file": "solver.prototxt",
+    "status": "Done",
+    "train_val file": "train_val.prototxt",
+    "username": "greg"
+}

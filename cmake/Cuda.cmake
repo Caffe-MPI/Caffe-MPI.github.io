@@ -4,7 +4,7 @@ endif()
 
 # Known NVIDIA GPU achitectures Caffe can be compiled for.
 # This list will be used for CUDA_ARCH_NAME = All option
-set(Caffe_known_gpu_archs "20 21(20) 30 35 50")
+set(Caffe_known_gpu_archs "20 21(20) 30 35 50 60 61 62")
 
 ################################################################################################
 # A function for automatic detection of GPUs installed  (if autodetection is enabled)
@@ -56,7 +56,7 @@ endfunction()
 #   caffe_select_nvcc_arch_flags(out_variable)
 function(caffe_select_nvcc_arch_flags out_variable)
   # List of arch names
-  set(__archs_names "Fermi" "Kepler" "Maxwell" "All" "Manual")
+  set(__archs_names "Fermi" "Kepler" "Maxwell" "Pascal" "Volta" "All" "Manual")
   set(__archs_name_default "All")
   if(NOT CMAKE_CROSSCOMPILING)
     list(APPEND __archs_names "Auto")
@@ -89,6 +89,10 @@ function(caffe_select_nvcc_arch_flags out_variable)
     set(__cuda_arch_bin "30 35")
   elseif(${CUDA_ARCH_NAME} STREQUAL "Maxwell")
     set(__cuda_arch_bin "50")
+  elseif(${CUDA_ARCH_NAME} STREQUAL "Pascal")
+    set(__cuda_arch_bin "60 61 62")
+  elseif(${CUDA_ARCH_NAME} STREQUAL "Volta")
+    set(__cuda_arch_bin "70")
   elseif(${CUDA_ARCH_NAME} STREQUAL "All")
     set(__cuda_arch_bin ${Caffe_known_gpu_archs})
   elseif(${CUDA_ARCH_NAME} STREQUAL "Auto")
@@ -143,14 +147,6 @@ macro(caffe_cuda_compile objlist_variable)
     string(REPLACE "/EHa" "" ${var} "${${var}}")
 
   endforeach()
-
-  if(UNIX OR APPLE)
-    list(APPEND CUDA_NVCC_FLAGS -Xcompiler -fPIC)
-  endif()
-
-  if(APPLE)
-    list(APPEND CUDA_NVCC_FLAGS -Xcompiler -Wno-unused-function)
-  endif()
 
   cuda_compile(cuda_objcs ${ARGN})
 
@@ -237,13 +233,39 @@ list(APPEND Caffe_LINKER_LIBS ${CUDA_CUDART_LIBRARY}
 
 # cudnn detection
 if(USE_CUDNN)
-  detect_cuDNN()
+#  detect_cuDNN()
+
+#  FIND_PACKAGE(CUDNN 6.0 EXACT)
+  FIND_PACKAGE(CUDNN)
+
+#  IF(NOT CUDNN_FOUND)
+#    CUDNN_INSTALL(6.0-rc ${CMAKE_INSTALL_PREFIX})
+#  ENDIF()
+
+  if(CUDNN_FOUND)
+   set(HAVE_CUDNN ${CUDNN_FOUND})
+  endif()
+
   if(HAVE_CUDNN)
     add_definitions(-DUSE_CUDNN)
     include_directories(SYSTEM ${CUDNN_INCLUDE})
     list(APPEND Caffe_LINKER_LIBS ${CUDNN_LIBRARY})
   endif()
 endif()
+
+if(UNIX OR APPLE)
+  list(APPEND CUDA_NVCC_FLAGS -std=c++11;-Xcompiler;-fPIC)
+endif()
+
+if(APPLE)
+  list(APPEND CUDA_NVCC_FLAGS -Xcompiler;-Wno-unused-function)
+endif()
+
+if(CMAKE_BUILD_TYPE MATCHES "Debug")
+  list(APPEND CUDA_NVCC_FLAGS -G -g)
+endif()
+
+SET(CUDA_PROPAGATE_HOST_FLAGS OFF)
 
 # setting nvcc arch flags
 caffe_select_nvcc_arch_flags(NVCC_FLAGS_EXTRA)

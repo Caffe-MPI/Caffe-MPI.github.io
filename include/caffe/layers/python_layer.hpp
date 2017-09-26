@@ -8,51 +8,125 @@
 
 namespace bp = boost::python;
 
+class PyGILAquire {
+  PyGILState_STATE state_;
+ public:
+  PyGILAquire() {
+    state_ = PyGILState_Ensure();
+  }
+  ~PyGILAquire() {
+    PyGILState_Release(state_);
+  }
+DISABLE_COPY_MOVE_AND_ASSIGN(PyGILAquire);
+};
+
+class PyGILRelease {
+  PyThreadState *state_;
+ public:
+  PyGILRelease() {
+    state_ = PyEval_SaveThread();
+  }
+  ~PyGILRelease() {
+    PyEval_RestoreThread(state_);
+  }
+DISABLE_COPY_MOVE_AND_ASSIGN(PyGILRelease);
+};
+
 namespace caffe {
 
-template <typename Dtype>
-class PythonLayer : public Layer<Dtype> {
+void PyErrFatal();
+void PyErrReportAndForward();
+
+
+#define PYTHON_CALL_BEGIN  \
+{                          \
+  PyGILRelease pygr;       \
+  {                        \
+    PyGILAquire pgil;
+
+#define PYTHON_CALL_END    \
+  }                        \
+}
+
+
+template <typename Ftype, typename Btype>
+class PythonLayer : public Layer<Ftype, Btype> {
  public:
   PythonLayer(PyObject* self, const LayerParameter& param)
-      : Layer<Dtype>(param), self_(bp::handle<>(bp::borrowed(self))) { }
+      : Layer<Ftype, Btype>(param), self_(bp::handle<>(bp::borrowed(self))) {}
 
-  virtual void LayerSetUp(const vector<Blob<Dtype>*>& bottom,
-      const vector<Blob<Dtype>*>& top) {
-    // Disallow PythonLayer in MultiGPU training stage, due to GIL issues
-    // Details: https://github.com/BVLC/caffe/issues/2936
-    if (this->phase_ == TRAIN && Caffe::solver_count() > 1
-        && !ShareInParallel()) {
-      LOG(FATAL) << "PythonLayer is not implemented in Multi-GPU training";
+  void LayerSetUp(const vector<Blob*>& bottom, const vector<Blob*>& top) override {
+    try {
+      std::lock_guard<std::mutex> lock(mutex());
+      PYTHON_CALL_BEGIN
+      self_.attr("param_str") = bp::str(this->layer_param_.python_param().param_str());
+      self_.attr("phase") = static_cast<int>(this->phase_);
+      self_.attr("setup")(bottom, top);
+      PYTHON_CALL_END
+    } catch (const bp::error_already_set&) {
+      PyErrReportAndForward();
+    } catch (...) {
+      PyErrFatal();
     }
-    self_.attr("param_str") = bp::str(
-        this->layer_param_.python_param().param_str());
-    self_.attr("phase") = static_cast<int>(this->phase_);
-    self_.attr("setup")(bottom, top);
-  }
-  virtual void Reshape(const vector<Blob<Dtype>*>& bottom,
-      const vector<Blob<Dtype>*>& top) {
-    self_.attr("reshape")(bottom, top);
   }
 
-  virtual inline bool ShareInParallel() const {
+  void Reshape(const vector<Blob*>& bottom, const vector<Blob*>& top) override {
+    try {
+      std::lock_guard<std::mutex> lock(mutex());
+      PYTHON_CALL_BEGIN
+      self_.attr("reshape")(bottom, top);
+      PYTHON_CALL_END
+    } catch (const bp::error_already_set&) {
+      PyErrReportAndForward();
+    } catch (...) {
+      PyErrFatal();
+    }
+  }
+
+  inline bool ShareInParallel() const override {
     return this->layer_param_.python_param().share_in_parallel();
   }
 
-  virtual inline const char* type() const { return "Python"; }
+  inline const char* type() const override { return "Python"; }
+
+  static std::mutex& mutex() {
+    return mutex_;
+  }
 
  protected:
-  virtual void Forward_cpu(const vector<Blob<Dtype>*>& bottom,
-      const vector<Blob<Dtype>*>& top) {
-    self_.attr("forward")(bottom, top);
+  void Forward_cpu(const vector<Blob*>& bottom, const vector<Blob*>& top) override {
+    try {
+      std::lock_guard<std::mutex> lock(mutex());
+      PYTHON_CALL_BEGIN
+      self_.attr("forward")(bottom, top);
+      PYTHON_CALL_END
+    } catch (const bp::error_already_set&) {
+      PyErrReportAndForward();
+    } catch (...) {
+      PyErrFatal();
+    }
   }
-  virtual void Backward_cpu(const vector<Blob<Dtype>*>& top,
-      const vector<bool>& propagate_down, const vector<Blob<Dtype>*>& bottom) {
-    self_.attr("backward")(top, propagate_down, bottom);
+
+  void Backward_cpu(const vector<Blob*>& top,
+      const vector<bool>& propagate_down, const vector<Blob*>& bottom) override {
+    try {
+      std::lock_guard<std::mutex> lock(mutex());
+      PYTHON_CALL_BEGIN
+      self_.attr("backward")(top, propagate_down, bottom);
+      PYTHON_CALL_END
+    } catch (const bp::error_already_set&) {
+      PyErrReportAndForward();
+    } catch (...) {
+      PyErrFatal();
+    }
   }
 
  private:
   bp::object self_;
+  static std::mutex mutex_;
 };
+
+template <typename Ftype, typename Btype> std::mutex PythonLayer<Ftype, Btype>::mutex_;
 
 }  // namespace caffe
 

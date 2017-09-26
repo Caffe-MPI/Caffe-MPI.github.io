@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # configure the project
 
 BASEDIR=$(dirname $0)

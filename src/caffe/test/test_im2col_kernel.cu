@@ -33,13 +33,13 @@ class Im2colKernelTest : public GPUDeviceTest<Dtype> {
  protected:
   Im2colKernelTest()
         // big so launches > 1024 threads
-      : blob_bottom_(new Blob<Dtype>(5, 500, 15, 15)),
-        blob_kernel_shape_(new Blob<int>()),
-        blob_stride_(new Blob<int>()),
-        blob_pad_(new Blob<int>()),
-        blob_dilation_(new Blob<int>()),
-        blob_top_(new Blob<Dtype>()),
-        blob_top_cpu_(new Blob<Dtype>()) {
+      : blob_bottom_(new TBlob<Dtype>(5, 500, 15, 15)),
+        blob_kernel_shape_(new TBlob<int>()),
+        blob_stride_(new TBlob<int>()),
+        blob_pad_(new TBlob<int>()),
+        blob_dilation_(new TBlob<int>()),
+        blob_top_(new TBlob<Dtype>()),
+        blob_top_cpu_(new TBlob<Dtype>()) {
     FillerParameter filler_param;
     GaussianFiller<Dtype> filler(filler_param);
     filler.Fill(this->blob_bottom_);
@@ -79,13 +79,13 @@ class Im2colKernelTest : public GPUDeviceTest<Dtype> {
     delete blob_dilation_;
   }
 
-  Blob<int>* const blob_kernel_shape_;
-  Blob<int>* const blob_stride_;
-  Blob<int>* const blob_pad_;
-  Blob<int>* const blob_dilation_;
-  Blob<Dtype>* const blob_bottom_;
-  Blob<Dtype>* const blob_top_;
-  Blob<Dtype>* const blob_top_cpu_;
+  TBlob<int>* const blob_kernel_shape_;
+  TBlob<int>* const blob_stride_;
+  TBlob<int>* const blob_pad_;
+  TBlob<int>* const blob_dilation_;
+  TBlob<Dtype>* const blob_bottom_;
+  TBlob<Dtype>* const blob_top_;
+  TBlob<Dtype>* const blob_top_cpu_;
   int height_;
   int width_;
   int channels_;
@@ -133,7 +133,7 @@ TYPED_TEST(Im2colKernelTest, Test2D) {
     for (int n = 0; n < this->blob_bottom_->num(); ++n) {
       int grid_dim = default_grid_dim/grid_div;
       // NOLINT_NEXT_LINE(whitespace/operators)
-      im2col_gpu_kernel<TypeParam><<<grid_dim, CAFFE_CUDA_NUM_THREADS>>>(
+      im2col_gpu_kernel<TypeParam><<<grid_dim, CAFFE_CUDA_NUM_THREADS, 0, Caffe::thread_stream()>>>(
         num_kernels, bottom_data + this->blob_bottom_->offset(n),
         this->height_, this->width_, this->kernel_size_, this->kernel_size_,
         this->pad_, this->pad_, this->stride_, this->stride_,
@@ -189,7 +189,8 @@ TYPED_TEST(Im2colKernelTest, TestND) {
       const int grid_dim = default_grid_dim / grid_div;
       TypeParam* top_data_gpu = this->blob_top_->mutable_gpu_data();
       // NOLINT_NEXT_LINE(whitespace/operators)
-      im2col_nd_gpu_kernel<TypeParam, 2><<<grid_dim, CAFFE_CUDA_NUM_THREADS>>>(
+      im2col_nd_gpu_kernel<TypeParam, 2><<<grid_dim, CAFFE_CUDA_NUM_THREADS,
+          0, Caffe::thread_stream()>>>(
           num_kernels, bottom_data_gpu + this->blob_bottom_->offset(n),
           this->blob_bottom_->gpu_shape() + 1, this->blob_top_->gpu_shape() + 1,
           this->blob_kernel_shape_->gpu_data(), this->blob_pad_->gpu_data(),

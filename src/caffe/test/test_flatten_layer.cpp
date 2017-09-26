@@ -17,8 +17,8 @@ class FlattenLayerTest : public MultiDeviceTest<TypeParam> {
   typedef typename TypeParam::Dtype Dtype;
  protected:
   FlattenLayerTest()
-      : blob_bottom_(new Blob<Dtype>(2, 3, 6, 5)),
-        blob_top_(new Blob<Dtype>()) {
+      : blob_bottom_(new TBlob<Dtype>(2, 3, 6, 5)),
+        blob_top_(new TBlob<Dtype>()) {
     Caffe::set_random_seed(1701);
     // fill the values
     FillerParameter filler_param;
@@ -28,10 +28,10 @@ class FlattenLayerTest : public MultiDeviceTest<TypeParam> {
     blob_top_vec_.push_back(blob_top_);
   }
   virtual ~FlattenLayerTest() { delete blob_bottom_; delete blob_top_; }
-  Blob<Dtype>* const blob_bottom_;
-  Blob<Dtype>* const blob_top_;
-  vector<Blob<Dtype>*> blob_bottom_vec_;
-  vector<Blob<Dtype>*> blob_top_vec_;
+  TBlob<Dtype>* const blob_bottom_;
+  TBlob<Dtype>* const blob_top_;
+  vector<Blob*> blob_bottom_vec_;
+  vector<Blob*> blob_top_vec_;
 };
 
 TYPED_TEST_CASE(FlattenLayerTest, TestDtypesAndDevices);
@@ -39,7 +39,7 @@ TYPED_TEST_CASE(FlattenLayerTest, TestDtypesAndDevices);
 TYPED_TEST(FlattenLayerTest, TestSetup) {
   typedef typename TypeParam::Dtype Dtype;
   LayerParameter layer_param;
-  FlattenLayer<Dtype> layer(layer_param);
+  FlattenLayer<Dtype, Dtype> layer(layer_param);
   layer.SetUp(this->blob_bottom_vec_, this->blob_top_vec_);
   ASSERT_EQ(this->blob_top_->num_axes(), 2);
   EXPECT_EQ(this->blob_top_->shape(0), 2);
@@ -50,7 +50,7 @@ TYPED_TEST(FlattenLayerTest, TestSetupWithAxis) {
   typedef typename TypeParam::Dtype Dtype;
   LayerParameter layer_param;
   layer_param.mutable_flatten_param()->set_axis(2);
-  FlattenLayer<Dtype> layer(layer_param);
+  FlattenLayer<Dtype, Dtype> layer(layer_param);
   layer.SetUp(this->blob_bottom_vec_, this->blob_top_vec_);
   ASSERT_EQ(this->blob_top_->num_axes(), 3);
   EXPECT_EQ(this->blob_top_->shape(0), 2);
@@ -62,7 +62,7 @@ TYPED_TEST(FlattenLayerTest, TestSetupWithEndAxis) {
   typedef typename TypeParam::Dtype Dtype;
   LayerParameter layer_param;
   layer_param.mutable_flatten_param()->set_end_axis(-2);
-  FlattenLayer<Dtype> layer(layer_param);
+  FlattenLayer<Dtype, Dtype> layer(layer_param);
   layer.SetUp(this->blob_bottom_vec_, this->blob_top_vec_);
   ASSERT_EQ(this->blob_top_->num_axes(), 3);
   EXPECT_EQ(this->blob_top_->shape(0), 2);
@@ -75,7 +75,7 @@ TYPED_TEST(FlattenLayerTest, TestSetupWithStartAndEndAxis) {
   LayerParameter layer_param;
   layer_param.mutable_flatten_param()->set_axis(0);
   layer_param.mutable_flatten_param()->set_end_axis(-2);
-  FlattenLayer<Dtype> layer(layer_param);
+  FlattenLayer<Dtype, Dtype> layer(layer_param);
   layer.SetUp(this->blob_bottom_vec_, this->blob_top_vec_);
   ASSERT_EQ(this->blob_top_->num_axes(), 2);
   EXPECT_EQ(this->blob_top_->shape(0), 2 * 3 * 6);
@@ -85,7 +85,7 @@ TYPED_TEST(FlattenLayerTest, TestSetupWithStartAndEndAxis) {
 TYPED_TEST(FlattenLayerTest, TestForward) {
   typedef typename TypeParam::Dtype Dtype;
   LayerParameter layer_param;
-  FlattenLayer<Dtype> layer(layer_param);
+  FlattenLayer<Dtype, Dtype> layer(layer_param);
   layer.SetUp(this->blob_bottom_vec_, this->blob_top_vec_);
   layer.Forward(this->blob_bottom_vec_, this->blob_top_vec_);
   for (int c = 0; c < 3 * 6 * 5; ++c) {
@@ -99,7 +99,7 @@ TYPED_TEST(FlattenLayerTest, TestForward) {
 TYPED_TEST(FlattenLayerTest, TestGradient) {
   typedef typename TypeParam::Dtype Dtype;
   LayerParameter layer_param;
-  FlattenLayer<Dtype> layer(layer_param);
+  FlattenLayer<Dtype, Dtype> layer(layer_param);
   GradientChecker<Dtype> checker(1e-2, 1e-2);
   checker.CheckGradientEltwise(&layer, this->blob_bottom_vec_,
       this->blob_top_vec_);

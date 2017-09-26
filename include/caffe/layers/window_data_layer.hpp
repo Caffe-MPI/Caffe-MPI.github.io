@@ -20,34 +20,36 @@ namespace caffe {
  *
  * TODO(dox): thorough documentation for Forward and proto params.
  */
-template <typename Dtype>
-class WindowDataLayer : public BasePrefetchingDataLayer<Dtype> {
+template <typename Ftype, typename Btype>
+class WindowDataLayer : public BasePrefetchingDataLayer<Ftype, Btype> {
  public:
   explicit WindowDataLayer(const LayerParameter& param)
-      : BasePrefetchingDataLayer<Dtype>(param) {}
+      : BasePrefetchingDataLayer<Ftype, Btype>(param) {}
   virtual ~WindowDataLayer();
-  virtual void DataLayerSetUp(const vector<Blob<Dtype>*>& bottom,
-      const vector<Blob<Dtype>*>& top);
+  void DataLayerSetUp(const vector<Blob*>& bottom, const vector<Blob*>& top) override;
 
-  virtual inline const char* type() const { return "WindowData"; }
-  virtual inline int ExactNumBottomBlobs() const { return 0; }
-  virtual inline int ExactNumTopBlobs() const { return 2; }
+  const char* type() const override { return "WindowData"; }
+  int ExactNumBottomBlobs() const override { return 0; }
+  int ExactNumTopBlobs() const override { return 2; }
+  bool is_gpu_transform() const override { return false; }
 
  protected:
-  virtual unsigned int PrefetchRand();
-  virtual void load_batch(Batch<Dtype>* batch);
+  unsigned int PrefetchRand();
+  void load_batch(Batch<Ftype>* batch, int thread_id, size_t queue_id = 0UL) override;
+  void start_reading() override {}
 
   shared_ptr<Caffe::RNG> prefetch_rng_;
   vector<std::pair<std::string, vector<int> > > image_database_;
   enum WindowField { IMAGE_INDEX, LABEL, OVERLAP, X1, Y1, X2, Y2, NUM };
   vector<vector<float> > fg_windows_;
   vector<vector<float> > bg_windows_;
-  Blob<Dtype> data_mean_;
-  vector<Dtype> mean_values_;
+  TBlob<Ftype> data_mean_;
+  vector<Ftype> mean_values_;
   bool has_mean_file_;
   bool has_mean_values_;
   bool cache_images_;
   vector<std::pair<std::string, Datum > > image_database_cache_;
+  vector<int> data_shape_, label_shape_;
 };
 
 }  // namespace caffe

@@ -5,15 +5,15 @@
 
 namespace caffe {
 
-template <typename Dtype>
-void ReductionLayer<Dtype>::LayerSetUp(const vector<Blob<Dtype>*>& bottom,
-      const vector<Blob<Dtype>*>& top) {
+template <typename Ftype, typename Btype>
+void ReductionLayer<Ftype, Btype>::LayerSetUp(const vector<Blob*>& bottom,
+      const vector<Blob*>& top) {
   op_ = this->layer_param_.reduction_param().operation();
 }
 
-template <typename Dtype>
-void ReductionLayer<Dtype>::Reshape(const vector<Blob<Dtype>*>& bottom,
-      const vector<Blob<Dtype>*>& top) {
+template <typename Ftype, typename Btype>
+void ReductionLayer<Ftype, Btype>::Reshape(const vector<Blob*>& bottom,
+      const vector<Blob*>& top) {
   axis_ = bottom[0]->CanonicalAxisIndex(
       this->layer_param_.reduction_param().axis());
   // In the output, we'll keep all axes up to the reduction axis, but
@@ -30,7 +30,7 @@ void ReductionLayer<Dtype>::Reshape(const vector<Blob<Dtype>*>& bottom,
       op_ == ReductionParameter_ReductionOp_MEAN) {
     vector<int> sum_mult_shape(1, dim_);
     sum_multiplier_.Reshape(sum_mult_shape);
-    caffe_set(dim_, Dtype(1), sum_multiplier_.mutable_cpu_data());
+    caffe_set<Ftype>(dim_, Ftype(1), sum_multiplier_.template mutable_cpu_data<Ftype>());
   }
   coeff_ = this->layer_param().reduction_param().coeff();
   if (op_ == ReductionParameter_ReductionOp_MEAN) {
@@ -38,15 +38,15 @@ void ReductionLayer<Dtype>::Reshape(const vector<Blob<Dtype>*>& bottom,
   }
 }
 
-template <typename Dtype>
-void ReductionLayer<Dtype>::Forward_cpu(
-    const vector<Blob<Dtype>*>& bottom, const vector<Blob<Dtype>*>& top) {
-  const Dtype* bottom_data = bottom[0]->cpu_data();
-  const Dtype* mult_data = NULL;
+template <typename Ftype, typename Btype>
+void ReductionLayer<Ftype, Btype>::Forward_cpu(
+    const vector<Blob*>& bottom, const vector<Blob*>& top) {
+  const Ftype* bottom_data = bottom[0]->cpu_data<Ftype>();
+  const Ftype* mult_data = NULL;
   if (sum_multiplier_.count() > 0) {
-    mult_data = sum_multiplier_.cpu_data();
+    mult_data = sum_multiplier_.template cpu_data<Ftype>();
   }
-  Dtype* top_data = top[0]->mutable_cpu_data();
+  Ftype* top_data = top[0]->mutable_cpu_data<Ftype>();
   for (int i = 0; i < num_; ++i) {
     switch (op_) {
     case ReductionParameter_ReductionOp_SUM:
@@ -66,19 +66,19 @@ void ReductionLayer<Dtype>::Forward_cpu(
     bottom_data += dim_;
     ++top_data;
   }
-  if (coeff_ != Dtype(1)) {
+  if (coeff_ != 1.F) {
     // Reset the top_data pointer.
-    top_data = top[0]->mutable_cpu_data();
-    caffe_scal(num_, coeff_, top_data);
+    top_data = top[0]->mutable_cpu_data<Ftype>();
+    caffe_scal(num_, Ftype(coeff_), top_data);
   }
 }
 
-template <typename Dtype>
-void ReductionLayer<Dtype>::Backward_cpu(const vector<Blob<Dtype>*>& top,
-    const vector<bool>& propagate_down, const vector<Blob<Dtype>*>& bottom) {
+template <typename Ftype, typename Btype>
+void ReductionLayer<Ftype, Btype>::Backward_cpu(const vector<Blob*>& top,
+    const vector<bool>& propagate_down, const vector<Blob*>& bottom) {
   if (!propagate_down[0]) { return; }
   // Get bottom_data, if needed.
-  const Dtype* bottom_data = NULL;
+  const Btype* bottom_data = NULL;
   switch (op_) {
   // Operations that don't need bottom_data
   case ReductionParameter_ReductionOp_SUM:
@@ -87,16 +87,16 @@ void ReductionLayer<Dtype>::Backward_cpu(const vector<Blob<Dtype>*>& top,
   // Operations that need bottom_data
   case ReductionParameter_ReductionOp_ASUM:
   case ReductionParameter_ReductionOp_SUMSQ:
-    bottom_data = bottom[0]->cpu_data();
+    bottom_data = bottom[0]->cpu_data<Btype>();
     break;
   default:
     LOG(FATAL) << "Unknown reduction op: "
         << ReductionParameter_ReductionOp_Name(op_);
   }
-  const Dtype* top_diff = top[0]->cpu_diff();
-  Dtype* bottom_diff = bottom[0]->mutable_cpu_diff();
+  const Btype* top_diff = top[0]->cpu_diff<Btype>();
+  Btype* bottom_diff = bottom[0]->mutable_cpu_diff<Btype>();
   for (int i = 0; i < num_; ++i) {
-    const Dtype bottom_coeff = (*top_diff) * coeff_;
+    const Btype bottom_coeff = (*top_diff) * coeff_;
     switch (op_) {
     case ReductionParameter_ReductionOp_SUM:
     case ReductionParameter_ReductionOp_MEAN:
@@ -107,7 +107,7 @@ void ReductionLayer<Dtype>::Backward_cpu(const vector<Blob<Dtype>*>& top,
       caffe_scal(dim_, bottom_coeff, bottom_diff);
       break;
     case ReductionParameter_ReductionOp_SUMSQ:
-      caffe_cpu_scale(dim_, 2 * bottom_coeff, bottom_data, bottom_diff);
+      caffe_cpu_scale(dim_, Btype(2 * bottom_coeff), bottom_data, bottom_diff);
       break;
     default:
       LOG(FATAL) << "Unknown reduction op: "
@@ -123,7 +123,7 @@ void ReductionLayer<Dtype>::Backward_cpu(const vector<Blob<Dtype>*>& top,
 STUB_GPU(ReductionLayer);
 #endif
 
-INSTANTIATE_CLASS(ReductionLayer);
+INSTANTIATE_CLASS_FB(ReductionLayer);
 REGISTER_LAYER_CLASS(Reduction);
 
 }  // namespace caffe

@@ -2,7 +2,7 @@
 // format. Nothing special here and no actual code is being tested.
 #include <string>
 
-#include "google/protobuf/text_format.h"
+#include <google/protobuf/text_format.h>
 #include "gtest/gtest.h"
 
 #include "caffe/proto/caffe.pb.h"

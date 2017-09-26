@@ -19,24 +19,25 @@ namespace caffe {
  *
  * TODO(dox): thorough documentation for Forward and proto params.
  */
-template <typename Dtype>
-class ImageDataLayer : public BasePrefetchingDataLayer<Dtype> {
+template <typename Ftype, typename Btype>
+class ImageDataLayer : public BasePrefetchingDataLayer<Ftype, Btype> {
  public:
   explicit ImageDataLayer(const LayerParameter& param)
-      : BasePrefetchingDataLayer<Dtype>(param) {}
+      : BasePrefetchingDataLayer<Ftype, Btype>(param) {}
   virtual ~ImageDataLayer();
-  virtual void DataLayerSetUp(const vector<Blob<Dtype>*>& bottom,
-      const vector<Blob<Dtype>*>& top);
+  void DataLayerSetUp(const vector<Blob*>& bottom, const vector<Blob*>& top) override;
 
-  virtual inline const char* type() const { return "ImageData"; }
-  virtual inline int ExactNumBottomBlobs() const { return 0; }
-  virtual inline int ExactNumTopBlobs() const { return 2; }
+  const char* type() const override { return "ImageData"; }
+  int ExactNumBottomBlobs() const override { return 0; }
+  int ExactNumTopBlobs() const override { return 2; }
+  bool is_gpu_transform() const override { return false; }
 
  protected:
-  shared_ptr<Caffe::RNG> prefetch_rng_;
-  virtual void ShuffleImages();
-  virtual void load_batch(Batch<Dtype>* batch);
+  void ShuffleImages();
+  void load_batch(Batch<Ftype>* batch, int thread_id, size_t queue_id = 0UL) override;
+  void start_reading() override {}
 
+  shared_ptr<Caffe::RNG> prefetch_rng_;
   vector<std::pair<std::string, int> > lines_;
   int lines_id_;
 };

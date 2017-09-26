@@ -66,7 +66,8 @@ bool ReadProtoFromBinaryFile(const char* filename, Message* proto) {
 
 void WriteProtoToBinaryFile(const Message& proto, const char* filename) {
   fstream output(filename, ios::out | ios::trunc | ios::binary);
-  CHECK(proto.SerializeToOstream(&output));
+  CHECK(proto.SerializeToOstream(&output)) << "Possible reasons: no disk space, "
+      "no write permissions, the destination folder doesn't exist";
 }
 
 #ifdef USE_OPENCV

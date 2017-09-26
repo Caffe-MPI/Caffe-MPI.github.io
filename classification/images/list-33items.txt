@@ -1,0 +1,33 @@
+/home/greg/ws/digits/examples/classification/images/one.png 1
+/home/greg/ws/digits/examples/classification/images/three.png
+/home/greg/ws/digits/examples/classification/images/four.png 4
+/home/greg/ws/digits/examples/classification/images/five.png 5
+/home/greg/ws/digits/examples/classification/images/one.png 1
+/home/greg/ws/digits/examples/classification/images/three.png
+/home/greg/ws/digits/examples/classification/images/four.png 4
+/home/greg/ws/digits/examples/classification/images/five.png 5
+/home/greg/ws/digits/examples/classification/images/one.png 1
+/home/greg/ws/digits/examples/classification/images/three.png
+/home/greg/ws/digits/examples/classification/images/four.png 4
+/home/greg/ws/digits/examples/classification/images/five.png 5
+/home/greg/ws/digits/examples/classification/images/one.png 1
+/home/greg/ws/digits/examples/classification/images/three.png
+/home/greg/ws/digits/examples/classification/images/four.png 4
+/home/greg/ws/digits/examples/classification/images/five.png 5
+/home/greg/ws/digits/examples/classification/images/one.png 1
+/home/greg/ws/digits/examples/classification/images/three.png
+/home/greg/ws/digits/examples/classification/images/four.png 4
+/home/greg/ws/digits/examples/classification/images/five.png 5
+/home/greg/ws/digits/examples/classification/images/one.png 1
+/home/greg/ws/digits/examples/classification/images/three.png
+/home/greg/ws/digits/examples/classification/images/four.png 4
+/home/greg/ws/digits/examples/classification/images/five.png 5
+/home/greg/ws/digits/examples/classification/images/one.png 1
+/home/greg/ws/digits/examples/classification/images/three.png
+/home/greg/ws/digits/examples/classification/images/four.png 4
+/home/greg/ws/digits/examples/classification/images/five.png 5
+/home/greg/ws/digits/examples/classification/images/one.png 1
+/home/greg/ws/digits/examples/classification/images/three.png
+/home/greg/ws/digits/examples/classification/images/four.png 4
+/home/greg/ws/digits/examples/classification/images/five.png 5
+/home/greg/ws/digits/examples/classification/images/one.png 1

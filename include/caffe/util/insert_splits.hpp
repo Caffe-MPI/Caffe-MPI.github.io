@@ -13,6 +13,7 @@ void InsertSplits(const NetParameter& param, NetParameter* param_split);
 
 void ConfigureSplitLayer(const string& layer_name, const string& blob_name,
     const int blob_idx, const int split_count, const float loss_weight,
+    Type fwd_type, Type bwd_type, Type fwd_math, Type bwd_math,
     LayerParameter* split_layer_param);
 
 string SplitLayerName(const string& layer_name, const string& blob_name,

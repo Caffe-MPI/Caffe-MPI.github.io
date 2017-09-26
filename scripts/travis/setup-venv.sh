@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # setup a Python virtualenv
 # (must come after install-deps)
 

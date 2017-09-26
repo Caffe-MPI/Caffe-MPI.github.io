@@ -10,24 +10,29 @@
 #define NO_GPU LOG(FATAL) << "Cannot use GPU in CPU-only Caffe: check mode."
 
 #define STUB_GPU(classname) \
-template <typename Dtype> \
-void classname<Dtype>::Forward_gpu(const vector<Blob<Dtype>*>& bottom, \
-    const vector<Blob<Dtype>*>& top) { NO_GPU; } \
-template <typename Dtype> \
-void classname<Dtype>::Backward_gpu(const vector<Blob<Dtype>*>& top, \
+template <typename Ftype, typename Btype> \
+void classname<Ftype, Btype>::Forward_gpu(const vector<Blob*>& bottom, \
+    const vector<Blob*>& top) { NO_GPU; } \
+template <typename Ftype, typename Btype> \
+void classname<Ftype, Btype>::Backward_gpu(const vector<Blob*>& top, \
     const vector<bool>& propagate_down, \
-    const vector<Blob<Dtype>*>& bottom) { NO_GPU; } \
+    const vector<Blob*>& bottom) { NO_GPU; }
 
 #define STUB_GPU_FORWARD(classname, funcname) \
-template <typename Dtype> \
-void classname<Dtype>::funcname##_##gpu(const vector<Blob<Dtype>*>& bottom, \
-    const vector<Blob<Dtype>*>& top) { NO_GPU; } \
+template <typename Ftype, typename Btype> \
+void classname<Ftype, Btype>::funcname##_##gpu(const vector<Blob*>& bottom, \
+    const vector<Blob*>& top) { NO_GPU; }
 
 #define STUB_GPU_BACKWARD(classname, funcname) \
-template <typename Dtype> \
-void classname<Dtype>::funcname##_##gpu(const vector<Blob<Dtype>*>& top, \
+template <typename Ftype, typename Btype> \
+void classname<Ftype, Btype>::funcname##_##gpu(const vector<Blob*>& top, \
     const vector<bool>& propagate_down, \
-    const vector<Blob<Dtype>*>& bottom) { NO_GPU; } \
+    const vector<Blob*>& bottom) { NO_GPU; }
+
+#define STUB_GPU_FORWARD1(classname, funcname) \
+template <typename Dtype> \
+void classname<Dtype>::funcname##_##gpu(const vector<Blob*>& bottom, \
+    const vector<Blob*>& top) { NO_GPU; }
 
 #else  // Normal GPU + CPU Caffe.
 
@@ -36,9 +41,10 @@ void classname<Dtype>::funcname##_##gpu(const vector<Blob<Dtype>*>& top, \
 #include <cuda_runtime.h>
 #include <curand.h>
 #include <driver_types.h>  // cuda driver types
-#ifdef USE_CUDNN  // cuDNN acceleration library.
-#include "caffe/util/cudnn.hpp"
+#ifndef NO_NVML
+  #include <nvml.h>
 #endif
+#include <sched.h>
 
 //
 // CUDA macros
@@ -83,14 +89,46 @@ const char* curandGetErrorString(curandStatus_t error);
 
 // CUDA: use 512 threads per block
 const int CAFFE_CUDA_NUM_THREADS = 512;
+const int CAFFE_CUDA_NUM_THREADS_HALF = 512;
 
 // CUDA: number of blocks for threads.
 inline int CAFFE_GET_BLOCKS(const int N) {
   return (N + CAFFE_CUDA_NUM_THREADS - 1) / CAFFE_CUDA_NUM_THREADS;
 }
+inline int CAFFE_GET_BLOCKS_HALF(const int N) {
+  return (N + CAFFE_CUDA_NUM_THREADS_HALF - 1) /
+      CAFFE_CUDA_NUM_THREADS_HALF;
+}
+
+
+#ifndef NO_NVML
+namespace nvml {
+
+// We might move this to Caffe TLS but we have to make sure that
+// this one gets initialized immediately after thread start.
+// Also, it's better to run this on current device (note that Caffe ctr
+// might be executed somewhere else). So, let's keep it risk free.
+struct NVMLInit {
+  NVMLInit() {
+    if (nvmlInit() != NVML_SUCCESS) {
+      LOG(ERROR) << "NVML failed to initialize";
+    } else {
+      LOG(INFO) << "NVML initialized on thread " << std::this_thread::get_id();
+    }
+  }
+  ~NVMLInit() {
+    nvmlShutdown();
+  }
+
+  nvmlDevice_t device_;
+  static std::mutex m_;
+};
+
+void setCpuAffinity(unsigned int rank);
+
+}  // namespace nvml
+#endif  // NO_NVML
 
 }  // namespace caffe
-
 #endif  // CPU_ONLY
-
 #endif  // CAFFE_UTIL_DEVICE_ALTERNATE_H_

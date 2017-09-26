@@ -13,15 +13,15 @@ namespace caffe {
  * @brief Takes at least two Blob%s and concatenates them along either the num
  *        or channel dimension, outputting the result.
  */
-template <typename Dtype>
-class ConcatLayer : public Layer<Dtype> {
+template <typename Ftype, typename Btype>
+class ConcatLayer : public Layer<Ftype, Btype> {
  public:
   explicit ConcatLayer(const LayerParameter& param)
-      : Layer<Dtype>(param) {}
-  virtual void LayerSetUp(const vector<Blob<Dtype>*>& bottom,
-      const vector<Blob<Dtype>*>& top);
-  virtual void Reshape(const vector<Blob<Dtype>*>& bottom,
-      const vector<Blob<Dtype>*>& top);
+      : Layer<Ftype, Btype>(param) {}
+  virtual void LayerSetUp(const vector<Blob*>& bottom,
+      const vector<Blob*>& top);
+  virtual void Reshape(const vector<Blob*>& bottom,
+      const vector<Blob*>& top);
 
   virtual inline const char* type() const { return "Concat"; }
   virtual inline int MinBottomBlobs() const { return 1; }
@@ -44,10 +44,10 @@ class ConcatLayer : public Layer<Dtype> {
    *        y = [\begin{array}{cccc} x_1 & x_2 & ... & x_K \end{array}]
    *      @f$
    */
-  virtual void Forward_cpu(const vector<Blob<Dtype>*>& bottom,
-      const vector<Blob<Dtype>*>& top);
-  virtual void Forward_gpu(const vector<Blob<Dtype>*>& bottom,
-      const vector<Blob<Dtype>*>& top);
+  virtual void Forward_cpu(const vector<Blob*>& bottom,
+      const vector<Blob*>& top);
+  virtual void Forward_gpu(const vector<Blob*>& bottom,
+      const vector<Blob*>& top);
 
   /**
    * @brief Computes the error gradient w.r.t. the concatenate inputs.
@@ -71,10 +71,10 @@ class ConcatLayer : public Layer<Dtype> {
    *        \frac{\partial E}{\partial y}
    *        @f$
    */
-  virtual void Backward_cpu(const vector<Blob<Dtype>*>& top,
-      const vector<bool>& propagate_down, const vector<Blob<Dtype>*>& bottom);
-  virtual void Backward_gpu(const vector<Blob<Dtype>*>& top,
-      const vector<bool>& propagate_down, const vector<Blob<Dtype>*>& bottom);
+  virtual void Backward_cpu(const vector<Blob*>& top,
+      const vector<bool>& propagate_down, const vector<Blob*>& bottom);
+  virtual void Backward_gpu(const vector<Blob*>& top,
+      const vector<bool>& propagate_down, const vector<Blob*>& bottom);
 
   int count_;
   int num_concats_;

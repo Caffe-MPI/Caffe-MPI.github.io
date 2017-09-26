@@ -7,58 +7,60 @@
 
 namespace caffe {
 
-template <typename Dtype>
-void MultinomialLogisticLossLayer<Dtype>::Reshape(
-    const vector<Blob<Dtype>*>& bottom, const vector<Blob<Dtype>*>& top) {
-  LossLayer<Dtype>::Reshape(bottom, top);
+template <typename Ftype, typename Btype>
+void MultinomialLogisticLossLayer<Ftype, Btype>::Reshape(
+    const vector<Blob*>& bottom, const vector<Blob*>& top) {
+  LossLayer<Ftype, Btype>::Reshape(bottom, top);
   CHECK_EQ(bottom[1]->channels(), 1);
   CHECK_EQ(bottom[1]->height(), 1);
   CHECK_EQ(bottom[1]->width(), 1);
 }
 
-template <typename Dtype>
-void MultinomialLogisticLossLayer<Dtype>::Forward_cpu(
-    const vector<Blob<Dtype>*>& bottom, const vector<Blob<Dtype>*>& top) {
-  const Dtype* bottom_data = bottom[0]->cpu_data();
-  const Dtype* bottom_label = bottom[1]->cpu_data();
+template <typename Ftype, typename Btype>
+void MultinomialLogisticLossLayer<Ftype, Btype>::Forward_cpu(
+    const vector<Blob*>& bottom, const vector<Blob*>& top) {
+  const Ftype* bottom_data = bottom[0]->cpu_data<Ftype>();
+  const Ftype* bottom_label = bottom[1]->cpu_data<Ftype>();
   int num = bottom[0]->num();
   int dim = bottom[0]->count() / bottom[0]->num();
-  Dtype loss = 0;
+  float loss = 0;
   for (int i = 0; i < num; ++i) {
     int label = static_cast<int>(bottom_label[i]);
-    Dtype prob = std::max(
-        bottom_data[i * dim + label], Dtype(kLOG_THRESHOLD));
+    float prob = std::max(
+        bottom_data[i * dim + label],
+        tol<Ftype>(kLOG_THRESHOLD, min_dtype<Ftype>()));
     loss -= log(prob);
   }
-  top[0]->mutable_cpu_data()[0] = loss / num;
+  top[0]->mutable_cpu_data<Ftype>()[0] = loss / num;
 }
 
-template <typename Dtype>
-void MultinomialLogisticLossLayer<Dtype>::Backward_cpu(
-    const vector<Blob<Dtype>*>& top, const vector<bool>& propagate_down,
-    const vector<Blob<Dtype>*>& bottom) {
+template <typename Ftype, typename Btype>
+void MultinomialLogisticLossLayer<Ftype, Btype>::Backward_cpu(
+    const vector<Blob*>& top, const vector<bool>& propagate_down,
+    const vector<Blob*>& bottom) {
   if (propagate_down[1]) {
     LOG(FATAL) << this->type()
                << " Layer cannot backpropagate to label inputs.";
   }
   if (propagate_down[0]) {
-    const Dtype* bottom_data = bottom[0]->cpu_data();
-    const Dtype* bottom_label = bottom[1]->cpu_data();
-    Dtype* bottom_diff = bottom[0]->mutable_cpu_diff();
+    const Btype* bottom_data = bottom[0]->cpu_data<Btype>();
+    const Btype* bottom_label = bottom[1]->cpu_data<Btype>();
+    Btype* bottom_diff = bottom[0]->mutable_cpu_diff<Btype>();
     int num = bottom[0]->num();
     int dim = bottom[0]->count() / bottom[0]->num();
-    caffe_set(bottom[0]->count(), Dtype(0), bottom_diff);
-    const Dtype scale = - top[0]->cpu_diff()[0] / num;
+    caffe_set(bottom[0]->count(), Btype(0), bottom_diff);
+    const float scale = - top[0]->cpu_diff<Btype>()[0] / num;
     for (int i = 0; i < num; ++i) {
       int label = static_cast<int>(bottom_label[i]);
-      Dtype prob = std::max(
-          bottom_data[i * dim + label], Dtype(kLOG_THRESHOLD));
+      float prob = std::max(
+          bottom_data[i * dim + label],
+          tol<Btype>(kLOG_THRESHOLD, min_dtype<Btype>()));
       bottom_diff[i * dim + label] = scale / prob;
     }
   }
 }
 
-INSTANTIATE_CLASS(MultinomialLogisticLossLayer);
+INSTANTIATE_CLASS_FB(MultinomialLogisticLossLayer);
 REGISTER_LAYER_CLASS(MultinomialLogisticLoss);
 
 }  // namespace caffe

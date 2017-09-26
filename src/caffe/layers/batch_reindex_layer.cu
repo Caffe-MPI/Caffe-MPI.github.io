@@ -17,19 +17,21 @@ __global__ void BRForward(const int count, const int inner_dim, const Dtype* in,
   }
 }
 
-template<typename Dtype>
-void BatchReindexLayer<Dtype>::Forward_gpu(const vector<Blob<Dtype>*>& bottom,
-                                           const vector<Blob<Dtype>*>& top) {
+template <typename Ftype, typename Btype>
+void BatchReindexLayer<Ftype, Btype>::Forward_gpu(const vector<Blob*>& bottom,
+                                           const vector<Blob*>& top) {
   check_batch_reindex(bottom[0]->shape(0), bottom[1]->count(),
-                      bottom[1]->cpu_data());
+                      bottom[1]->cpu_data<Ftype>());
   if (top[0]->count() == 0) {
     return;
   }
   int threads = top[0]->count();
   // NOLINT_NEXT_LINE(whitespace/operators)
-  BRForward<Dtype> <<<CAFFE_GET_BLOCKS(threads), CAFFE_CUDA_NUM_THREADS>>>(
+  BRForward<Ftype><<<CAFFE_GET_BLOCKS(threads), CAFFE_CUDA_NUM_THREADS, 0,
+      Caffe::thread_stream()>>>(
       top[0]->count(), bottom[0]->count() / bottom[0]->shape(0),
-      bottom[0]->gpu_data(), bottom[1]->gpu_data(), top[0]->mutable_gpu_data());
+      bottom[0]->gpu_data<Ftype>(), bottom[1]->gpu_data<Ftype>(),
+      top[0]->mutable_gpu_data<Ftype>());
   CUDA_POST_KERNEL_CHECK;
 }
 
@@ -50,17 +52,17 @@ __global__ void BRBackward(const int count, const int inner_dim,
   }
 }
 
-template<typename Dtype>
-void BatchReindexLayer<Dtype>::Backward_gpu(
-    const vector<Blob<Dtype>*>& top, const vector<bool>& propagate_down,
-    const vector<Blob<Dtype>*>& bottom) {
+template <typename Ftype, typename Btype>
+void BatchReindexLayer<Ftype, Btype>::Backward_gpu(
+    const vector<Blob*>& top, const vector<bool>& propagate_down,
+    const vector<Blob*>& bottom) {
   CHECK(!propagate_down[1]) << "Cannot backprop to index.";
   if (!propagate_down[0]) {
     return;
   }
 
   vector<std::pair<int, int> > mapping;
-  const Dtype* perm = bottom[1]->cpu_data();
+  const Btype* perm = bottom[1]->cpu_data<Btype>();
   for (int i = 0; i < bottom[1]->count(); ++i) {
     mapping.push_back(pair<int, int>(static_cast<int>(perm[i]), i));
   }
@@ -75,15 +77,15 @@ void BatchReindexLayer<Dtype>::Backward_gpu(
   // length of that list.
   vector<int> shape;
   shape.push_back(bottom[1]->count());
-  Blob<Dtype> top_indexes(shape);
+  TBlob<Btype> top_indexes(shape);
   shape[0] = bottom[0]->shape(0);
-  Blob<Dtype> counts(shape);
-  Blob<Dtype> begins(shape);
-  Dtype* t_i_data = top_indexes.mutable_cpu_data();
-  Dtype* c_data = counts.mutable_cpu_data();
-  Dtype* b_data = begins.mutable_cpu_data();
-  caffe_set(begins.count(), Dtype(-1), b_data);
-  caffe_set(counts.count(), Dtype(0), c_data);
+  TBlob<Btype> counts(shape);
+  TBlob<Btype> begins(shape);
+  Btype* t_i_data = top_indexes.mutable_cpu_data();
+  Btype* c_data = counts.mutable_cpu_data();
+  Btype* b_data = begins.mutable_cpu_data();
+  caffe_set(begins.count(), Btype(-1), b_data);
+  caffe_set(counts.count(), Btype(0), c_data);
   for (int i = 0; i < mapping.size(); ++i) {
     t_i_data[i] = mapping[i].second;
     if (b_data[mapping[i].first] == -1) {
@@ -94,13 +96,14 @@ void BatchReindexLayer<Dtype>::Backward_gpu(
 
   int threads = bottom[0]->count();
   // NOLINT_NEXT_LINE(whitespace/operators)
-  BRBackward<Dtype> <<<CAFFE_GET_BLOCKS(threads), CAFFE_CUDA_NUM_THREADS>>>(
+  BRBackward<Btype><<<CAFFE_GET_BLOCKS(threads), CAFFE_CUDA_NUM_THREADS, 0,
+      Caffe::thread_stream()>>>(
       bottom[0]->count(), bottom[0]->count() / bottom[0]->shape(0),
-      top[0]->gpu_diff(), top_indexes.gpu_data(), begins.gpu_data(),
-      counts.gpu_data(), bottom[0]->mutable_gpu_diff());
+      top[0]->gpu_diff<Btype>(), top_indexes.gpu_data(), begins.gpu_data(),
+      counts.gpu_data(), bottom[0]->mutable_gpu_diff<Btype>());
   CUDA_POST_KERNEL_CHECK;
 }
 
-INSTANTIATE_LAYER_GPU_FUNCS(BatchReindexLayer);
+INSTANTIATE_LAYER_GPU_FUNCS_FB(BatchReindexLayer);
 
 }  // namespace caffe

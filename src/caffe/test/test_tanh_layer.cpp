@@ -33,8 +33,8 @@ class TanHLayerTest : public MultiDeviceTest<TypeParam> {
 
  protected:
   TanHLayerTest()
-      : blob_bottom_(new Blob<Dtype>(2, 3, 4, 5)),
-        blob_top_(new Blob<Dtype>()) {
+      : blob_bottom_(new TBlob<Dtype>(2, 3, 4, 5)),
+        blob_top_(new TBlob<Dtype>()) {
     Caffe::set_random_seed(1701);
     FillerParameter filler_param;
     blob_bottom_vec_.push_back(blob_bottom_);
@@ -49,13 +49,13 @@ class TanHLayerTest : public MultiDeviceTest<TypeParam> {
     filler.Fill(this->blob_bottom_);
 
     LayerParameter layer_param;
-    TanHLayer<Dtype> layer(layer_param);
+    TanHLayer<Dtype, Dtype> layer(layer_param);
     layer.SetUp(this->blob_bottom_vec_, this->blob_top_vec_);
     layer.Forward(this->blob_bottom_vec_, this->blob_top_vec_);
     // Now, check values
     const Dtype* bottom_data = this->blob_bottom_->cpu_data();
     const Dtype* top_data = this->blob_top_->cpu_data();
-    const Dtype min_precision = 1e-5;
+    const Dtype min_precision = tol<Dtype>(1e-5, 1e-3);
     for (int i = 0; i < this->blob_bottom_->count(); ++i) {
       Dtype expected_value = tanh_naive(bottom_data[i]);
       Dtype precision = std::max(
@@ -71,16 +71,17 @@ class TanHLayerTest : public MultiDeviceTest<TypeParam> {
     filler.Fill(this->blob_bottom_);
 
     LayerParameter layer_param;
-    TanHLayer<Dtype> layer(layer_param);
-    GradientChecker<Dtype> checker(1e-2, 1e-2, 1701);
+    TanHLayer<Dtype, Dtype> layer(layer_param);
+    GradientChecker<Dtype> checker(tol<Dtype>(1e-2, 1e-1),
+        tol<Dtype>(1e-2, 1e-1), 1701);
     checker.CheckGradientEltwise(&layer, this->blob_bottom_vec_,
         this->blob_top_vec_);
   }
 
-  Blob<Dtype>* const blob_bottom_;
-  Blob<Dtype>* const blob_top_;
-  vector<Blob<Dtype>*> blob_bottom_vec_;
-  vector<Blob<Dtype>*> blob_top_vec_;
+  TBlob<Dtype>* const blob_bottom_;
+  TBlob<Dtype>* const blob_top_;
+  vector<Blob*> blob_bottom_vec_;
+  vector<Blob*> blob_top_vec_;
 };
 
 TYPED_TEST_CASE(TanHLayerTest, TestDtypesAndDevices);

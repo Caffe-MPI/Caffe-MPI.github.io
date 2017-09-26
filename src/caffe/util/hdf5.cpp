@@ -1,4 +1,5 @@
 #include "caffe/util/hdf5.hpp"
+#include "caffe/util/math_functions.hpp"
 
 #include <string>
 #include <vector>
@@ -6,10 +7,9 @@
 namespace caffe {
 
 // Verifies format of data stored in HDF5 file and reshapes blob accordingly.
-template <typename Dtype>
 void hdf5_load_nd_dataset_helper(
     hid_t file_id, const char* dataset_name_, int min_dim, int max_dim,
-    Blob<Dtype>* blob) {
+    Blob* blob) {
   // Verify that the dataset exists.
   CHECK(H5LTfind_dataset(file_id, dataset_name_))
       << "Failed to find HDF5 dataset " << dataset_name_;
@@ -63,64 +63,76 @@ void hdf5_load_nd_dataset_helper(
   blob->Reshape(blob_dims);
 }
 
-template <>
-void hdf5_load_nd_dataset<float>(hid_t file_id, const char* dataset_name_,
-        int min_dim, int max_dim, Blob<float>* blob) {
+void hdf5_load_nd_dataset(hid_t file_id, const char* dataset_name_,
+        int min_dim, int max_dim, Blob* blob) {
   hdf5_load_nd_dataset_helper(file_id, dataset_name_, min_dim, max_dim, blob);
-  herr_t status = H5LTread_dataset_float(
-    file_id, dataset_name_, blob->mutable_cpu_data());
-  CHECK_GE(status, 0) << "Failed to read float dataset " << dataset_name_;
+  herr_t status = -1;
+  if (is_type<float>(blob->data_type())) {
+    status = H5LTread_dataset_float(
+        file_id, dataset_name_, blob->mutable_cpu_data<float>());
+  } else if (is_type<double>(blob->data_type())) {
+    status = H5LTread_dataset_double(
+        file_id, dataset_name_, blob->mutable_cpu_data<double>());
+  }
+#ifndef CPU_ONLY
+  else if (is_type<float16>(blob->data_type())) {
+    const int count = blob->count();
+    std::vector<float> buf(count);
+    status = H5LTread_dataset_float(file_id, dataset_name_,
+        &buf.front());
+    if (status >= 0) {
+      LOG(INFO) << "Converting " << count << " float values to float16";
+      caffe_cpu_convert<float, float16>(count, &buf.front(),
+          blob->mutable_cpu_data<float16>());
+    }
+  }
+#endif
+  // NOLINT_NEXT_LINE(readability/braces)
+  else {
+    LOG(FATAL) << "Unsupported data type: " << Type_Name(blob->data_type());
+  }
+  CHECK_GE(status, 0) << "Failed to read dataset " << dataset_name_;
 }
 
-template <>
-void hdf5_load_nd_dataset<double>(hid_t file_id, const char* dataset_name_,
-        int min_dim, int max_dim, Blob<double>* blob) {
-  hdf5_load_nd_dataset_helper(file_id, dataset_name_, min_dim, max_dim, blob);
-  herr_t status = H5LTread_dataset_double(
-    file_id, dataset_name_, blob->mutable_cpu_data());
-  CHECK_GE(status, 0) << "Failed to read double dataset " << dataset_name_;
-}
 
-template <>
-void hdf5_save_nd_dataset<float>(
-    const hid_t file_id, const string& dataset_name, const Blob<float>& blob,
-    bool write_diff) {
-  int num_axes = blob.num_axes();
-  hsize_t *dims = new hsize_t[num_axes];
+void hdf5_save_nd_dataset(hid_t file_id, const string& dataset_name,
+    const Blob& blob, bool write_diff) {
+  // we treat H5T_FLOAT and H5T_INTEGER the same in terms of storing floats
+  // therefore we store float16 values as floats
+  const int num_axes = blob.num_axes();
+  std::vector<hsize_t> dims(num_axes);
   for (int i = 0; i < num_axes; ++i) {
     dims[i] = blob.shape(i);
   }
-  const float* data;
-  if (write_diff) {
-    data = blob.cpu_diff();
-  } else {
-    data = blob.cpu_data();
+  herr_t status = -1;
+  if (is_type<float>(blob.data_type())) {
+    const float* data = write_diff ?
+        blob.cpu_diff<float>() :  blob.cpu_data<float>();
+    status = H5LTmake_dataset_float(file_id, dataset_name.c_str(), num_axes,
+        &dims.front(), data);
+  } else if (is_type<double>(blob.data_type())) {
+    const double* data = write_diff ?
+        blob.cpu_diff<double>() :  blob.cpu_data<double>();
+    status = H5LTmake_dataset_double(file_id, dataset_name.c_str(), num_axes,
+        &dims.front(), data);
   }
-  herr_t status = H5LTmake_dataset_float(
-      file_id, dataset_name.c_str(), num_axes, dims, data);
-  CHECK_GE(status, 0) << "Failed to make float dataset " << dataset_name;
-  delete[] dims;
-}
-
-template <>
-void hdf5_save_nd_dataset<double>(
-    hid_t file_id, const string& dataset_name, const Blob<double>& blob,
-    bool write_diff) {
-  int num_axes = blob.num_axes();
-  hsize_t *dims = new hsize_t[num_axes];
-  for (int i = 0; i < num_axes; ++i) {
-    dims[i] = blob.shape(i);
+#ifndef CPU_ONLY
+  else if (is_type<float16>(blob.data_type())) {
+    const float16* data = write_diff ?
+        blob.cpu_diff<float16>() : blob.cpu_data<float16>();
+    const int count = blob.count();
+    LOG(INFO) << "Converting " << count << " float16 values to float";
+    std::vector<float> buf(count);
+    caffe_cpu_convert(count, data, &buf.front());
+    status = H5LTmake_dataset_float(file_id, dataset_name.c_str(),
+        num_axes, &dims.front(), &buf.front());
   }
-  const double* data;
-  if (write_diff) {
-    data = blob.cpu_diff();
-  } else {
-    data = blob.cpu_data();
+#endif
+  // NOLINT_NEXT_LINE(readability/braces)
+  else {
+    LOG(FATAL) << "Unsupported data type: " << Type_Name(blob.data_type());
   }
-  herr_t status = H5LTmake_dataset_double(
-      file_id, dataset_name.c_str(), num_axes, dims, data);
-  CHECK_GE(status, 0) << "Failed to make double dataset " << dataset_name;
-  delete[] dims;
+  CHECK_GE(status, 0) << "Failed to write dataset " << dataset_name;
 }
 
 string hdf5_load_string(hid_t loc_id, const string& dataset_name) {

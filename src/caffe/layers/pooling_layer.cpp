@@ -10,10 +10,12 @@ namespace caffe {
 using std::min;
 using std::max;
 
-template <typename Dtype>
-void PoolingLayer<Dtype>::LayerSetUp(const vector<Blob<Dtype>*>& bottom,
-      const vector<Blob<Dtype>*>& top) {
+template <typename Ftype, typename Btype>
+void PoolingLayer<Ftype, Btype>::LayerSetUp(const vector<Blob*>& bottom,
+      const vector<Blob*>& top) {
   PoolingParameter pool_param = this->layer_param_.pooling_param();
+  is_max_pooling_ = this->layer_param_.pooling_param().pool() ==
+    PoolingParameter_PoolMethod_MAX;
   if (pool_param.global_pooling()) {
     CHECK(!(pool_param.has_kernel_size() ||
       pool_param.has_kernel_h() || pool_param.has_kernel_w()))
@@ -75,9 +77,9 @@ void PoolingLayer<Dtype>::LayerSetUp(const vector<Blob<Dtype>*>& bottom,
   }
 }
 
-template <typename Dtype>
-void PoolingLayer<Dtype>::Reshape(const vector<Blob<Dtype>*>& bottom,
-      const vector<Blob<Dtype>*>& top) {
+template <typename Ftype, typename Btype>
+void PoolingLayer<Ftype, Btype>::Reshape(const vector<Blob*>& bottom,
+      const vector<Blob*>& top) {
   CHECK_EQ(4, bottom[0]->num_axes()) << "Input must have 4 axes, "
       << "corresponding to (num, channels, height, width)";
   channels_ = bottom[0]->channels();
@@ -109,8 +111,7 @@ void PoolingLayer<Dtype>::Reshape(const vector<Blob<Dtype>*>& bottom,
     top[1]->ReshapeLike(*top[0]);
   }
   // If max pooling, we will initialize the vector index part.
-  if (this->layer_param_.pooling_param().pool() ==
-      PoolingParameter_PoolMethod_MAX && top.size() == 1) {
+  if (is_max_pooling_ && top.size() == 1) {
     max_idx_.Reshape(bottom[0]->num(), channels_, pooled_height_,
         pooled_width_);
   }
@@ -124,29 +125,29 @@ void PoolingLayer<Dtype>::Reshape(const vector<Blob<Dtype>*>& bottom,
 
 // TODO(Yangqing): Is there a faster way to do pooling in the channel-first
 // case?
-template <typename Dtype>
-void PoolingLayer<Dtype>::Forward_cpu(const vector<Blob<Dtype>*>& bottom,
-      const vector<Blob<Dtype>*>& top) {
-  const Dtype* bottom_data = bottom[0]->cpu_data();
-  Dtype* top_data = top[0]->mutable_cpu_data();
+template <typename Ftype, typename Btype>
+void PoolingLayer<Ftype, Btype>::Forward_cpu(const vector<Blob*>& bottom,
+      const vector<Blob*>& top) {
+  const Ftype* bottom_data = bottom[0]->cpu_data<Ftype>();
+  Ftype* top_data = top[0]->mutable_cpu_data<Ftype>();
   const int top_count = top[0]->count();
   // We'll output the mask to top[1] if it's of size >1.
   const bool use_top_mask = top.size() > 1;
   int* mask = NULL;  // suppress warnings about uninitalized variables
-  Dtype* top_mask = NULL;
+  Ftype* top_mask = NULL;
   // Different pooling methods. We explicitly do the switch outside the for
   // loop to save time, although this results in more code.
   switch (this->layer_param_.pooling_param().pool()) {
   case PoolingParameter_PoolMethod_MAX:
     // Initialize
     if (use_top_mask) {
-      top_mask = top[1]->mutable_cpu_data();
-      caffe_set(top_count, Dtype(-1), top_mask);
+      top_mask = top[1]->mutable_cpu_data<Ftype>();
+      caffe_set(top_count, Ftype(-1), top_mask);
     } else {
       mask = max_idx_.mutable_cpu_data();
       caffe_set(top_count, -1, mask);
     }
-    caffe_set(top_count, Dtype(-FLT_MAX), top_data);
+    caffe_set(top_count, -max_dtype<Ftype>(), top_data);
     // The main loop
     for (int n = 0; n < bottom[0]->num(); ++n) {
       for (int c = 0; c < channels_; ++c) {
@@ -165,7 +166,7 @@ void PoolingLayer<Dtype>::Forward_cpu(const vector<Blob<Dtype>*>& bottom,
                 if (bottom_data[index] > top_data[pool_index]) {
                   top_data[pool_index] = bottom_data[index];
                   if (use_top_mask) {
-                    top_mask[pool_index] = static_cast<Dtype>(index);
+                    top_mask[pool_index] = static_cast<Ftype>(index);
                   } else {
                     mask[pool_index] = index;
                   }
@@ -226,26 +227,26 @@ void PoolingLayer<Dtype>::Forward_cpu(const vector<Blob<Dtype>*>& bottom,
   }
 }
 
-template <typename Dtype>
-void PoolingLayer<Dtype>::Backward_cpu(const vector<Blob<Dtype>*>& top,
-      const vector<bool>& propagate_down, const vector<Blob<Dtype>*>& bottom) {
+template <typename Ftype, typename Btype>
+void PoolingLayer<Ftype, Btype>::Backward_cpu(const vector<Blob*>& top,
+      const vector<bool>& propagate_down, const vector<Blob*>& bottom) {
   if (!propagate_down[0]) {
     return;
   }
-  const Dtype* top_diff = top[0]->cpu_diff();
-  Dtype* bottom_diff = bottom[0]->mutable_cpu_diff();
+  const Btype* top_diff = top[0]->cpu_diff<Btype>();
+  Btype* bottom_diff = bottom[0]->mutable_cpu_diff<Btype>();
   // Different pooling methods. We explicitly do the switch outside the for
   // loop to save time, although this results in more codes.
-  caffe_set(bottom[0]->count(), Dtype(0), bottom_diff);
+  caffe_set(bottom[0]->count(), Btype(0), bottom_diff);
   // We'll output the mask to top[1] if it's of size >1.
   const bool use_top_mask = top.size() > 1;
   const int* mask = NULL;  // suppress warnings about uninitialized variables
-  const Dtype* top_mask = NULL;
+  const Btype* top_mask = NULL;
   switch (this->layer_param_.pooling_param().pool()) {
   case PoolingParameter_PoolMethod_MAX:
     // The main loop
     if (use_top_mask) {
-      top_mask = top[1]->cpu_data();
+      top_mask = top[1]->cpu_data<Btype>();
     } else {
       mask = max_idx_.cpu_data();
     }
@@ -255,7 +256,8 @@ void PoolingLayer<Dtype>::Backward_cpu(const vector<Blob<Dtype>*>& top,
           for (int pw = 0; pw < pooled_width_; ++pw) {
             const int index = ph * pooled_width_ + pw;
             const int bottom_index =
-                use_top_mask ? top_mask[index] : mask[index];
+                use_top_mask ? static_cast<int>(top_mask[index]) :
+                static_cast<int>(mask[index]);
             bottom_diff[bottom_index] += top_diff[index];
           }
         }
@@ -311,6 +313,6 @@ void PoolingLayer<Dtype>::Backward_cpu(const vector<Blob<Dtype>*>& top,
 STUB_GPU(PoolingLayer);
 #endif
 
-INSTANTIATE_CLASS(PoolingLayer);
+INSTANTIATE_CLASS_FB(PoolingLayer);
 
 }  // namespace caffe

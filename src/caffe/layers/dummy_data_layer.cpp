@@ -5,9 +5,9 @@
 
 namespace caffe {
 
-template <typename Dtype>
-void DummyDataLayer<Dtype>::LayerSetUp(const vector<Blob<Dtype>*>& bottom,
-      const vector<Blob<Dtype>*>& top) {
+template <typename Ftype, typename Btype>
+void DummyDataLayer<Ftype, Btype>::LayerSetUp(const vector<Blob*>& bottom,
+      const vector<Blob*>& top) {
   const int num_top = top.size();
   const DummyDataParameter& param = this->layer_param_.dummy_data_param();
   const int num_data_filler = param.data_filler_size();
@@ -39,8 +39,8 @@ void DummyDataLayer<Dtype>::LayerSetUp(const vector<Blob<Dtype>*>& bottom,
         << "Must specify 'shape' once, or once per top blob "
         << "(" << num_top << "); specified " << param.shape_size() << ".";
   }
-  // refill_[i] tells Forward i whether or not to actually refill top Blob i.
-  // If refill_[i] is false, Forward does nothing for Blob i. We use this to
+  // refill_[i] tells Forward i whether or not to actually refill top TBlob i.
+  // If refill_[i] is false, Forward does nothing for TBlob i. We use this to
   // avoid wastefully refilling "constant" Blobs in every forward pass.
   // We first fill refill_ in with the INVERSE of its final values.
   // The first time we run Forward from the LayerSetUp method, we'll fill only
@@ -61,12 +61,12 @@ void DummyDataLayer<Dtype>::LayerSetUp(const vector<Blob<Dtype>*>& bottom,
     refill_.resize(1);
     refill_[0] = (strcmp(filler_param.type().c_str(), "constant") == 0);
     fillers_.resize(1);
-    fillers_[0].reset(GetFiller<Dtype>(filler_param));
+    fillers_[0].reset(GetFiller<Ftype>(filler_param));
   } else {
     refill_.resize(num_top);
     fillers_.resize(num_top);
     for (int i = 0; i < num_top; ++i) {
-      fillers_[i].reset(GetFiller<Dtype>(param.data_filler(i)));
+      fillers_[i].reset(GetFiller<Ftype>(param.data_filler(i)));
       // Refill on each iteration iff not using a constant filler,
       // but use the inverse of this rule for the first run.
       refill_[i] =
@@ -97,9 +97,9 @@ void DummyDataLayer<Dtype>::LayerSetUp(const vector<Blob<Dtype>*>& bottom,
   }
 }
 
-template <typename Dtype>
-void DummyDataLayer<Dtype>::Forward_cpu(const vector<Blob<Dtype>*>& bottom,
-      const vector<Blob<Dtype>*>& top) {
+template <typename Ftype, typename Btype>
+void DummyDataLayer<Ftype, Btype>::Forward_cpu(const vector<Blob*>& bottom,
+      const vector<Blob*>& top) {
   for (int i = 0; i < top.size(); ++i) {
     const int filler_id = (fillers_.size() > 1) ? i : 0;
     if (refill_[filler_id]) {
@@ -108,7 +108,7 @@ void DummyDataLayer<Dtype>::Forward_cpu(const vector<Blob<Dtype>*>& bottom,
   }
 }
 
-INSTANTIATE_CLASS(DummyDataLayer);
+INSTANTIATE_CLASS_FB(DummyDataLayer);
 REGISTER_LAYER_CLASS(DummyData);
 
 }  // namespace caffe

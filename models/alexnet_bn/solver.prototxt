@@ -1,0 +1,33 @@
+net: "models/alexnet_bn/train_val.prototxt"
+
+test_iter: 195   	#  50000/256
+test_interval: 5000      
+test_initialization: false
+
+display:  100
+
+max_iter: 150000  	# 60 epochs 
+
+lr_policy: "poly"
+#lr_policy: "fixed"
+base_lr:  0.02
+power: 2.
+momentum: 0.9
+weight_decay: 0.0005
+
+snapshot: 500000
+snapshot_prefix: "models/alexnet_bn/snapshots/alexnet_bn"
+snapshot_after_train: true
+
+solver_mode: GPU
+random_seed: 1
+
+# Train dataset size = 1,281,167
+# Test dataset size  =    50,000
+
+# batch 64  --> epoch = 20,000
+# batch 96  --> epoch = 15,000
+# batch 128 --> epoch = 10,000 
+# batch 256 --> epoch =  5,000  
+# batch 512 --> epoch =  2,500   #
+# batch 1024--> epoch =  1,250

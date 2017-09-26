@@ -22,7 +22,7 @@
 #include <fstream>  // NOLINT(readability/streams)
 #include <string>
 
-#include "boost/scoped_ptr.hpp"
+#include <boost/scoped_ptr.hpp>
 #include "caffe/proto/caffe.pb.h"
 #include "caffe/util/db.hpp"
 #include "caffe/util/format.hpp"
@@ -124,7 +124,7 @@ int main(int argc, char** argv) {
         "output_db_file\n"
         "The MNIST dataset could be downloaded at\n"
         "    http://yann.lecun.com/exdb/mnist/\n"
-        "You should gunzip them after downloading,"
+        "You should gunzip them after downloading, "
         "or directly use data/mnist/get_mnist.sh\n");
   gflags::ParseCommandLineFlags(&argc, &argv, true);
 

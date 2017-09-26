@@ -12,30 +12,27 @@
 namespace caffe {
 
 #ifdef USE_CUDNN
-template <typename Dtype>
-class CuDNNLRNLayer : public LRNLayer<Dtype> {
+template <typename Ftype, typename Btype>
+class CuDNNLRNLayer : public LRNLayer<Ftype, Btype> {
  public:
   explicit CuDNNLRNLayer(const LayerParameter& param)
-      : LRNLayer<Dtype>(param), handles_setup_(false) {}
-  virtual void LayerSetUp(const vector<Blob<Dtype>*>& bottom,
-      const vector<Blob<Dtype>*>& top);
-  virtual void Reshape(const vector<Blob<Dtype>*>& bottom,
-      const vector<Blob<Dtype>*>& top);
+      : LRNLayer<Ftype, Btype>(param), handles_setup_(false) {}
+  virtual void LayerSetUp(const vector<Blob*>& bottom,
+      const vector<Blob*>& top);
+  virtual void Reshape(const vector<Blob*>& bottom,
+      const vector<Blob*>& top);
   virtual ~CuDNNLRNLayer();
 
  protected:
-  virtual void Forward_gpu(const vector<Blob<Dtype>*>& bottom,
-      const vector<Blob<Dtype>*>& top);
-  virtual void Backward_gpu(const vector<Blob<Dtype>*>& top,
-      const vector<bool>& propagate_down, const vector<Blob<Dtype>*>& bottom);
+  virtual void Forward_gpu(const vector<Blob*>& bottom,
+      const vector<Blob*>& top);
+  virtual void Backward_gpu(const vector<Blob*>& top,
+      const vector<bool>& propagate_down, const vector<Blob*>& bottom);
 
   bool handles_setup_;
-  cudnnHandle_t             handle_;
   cudnnLRNDescriptor_t norm_desc_;
-  cudnnTensorDescriptor_t bottom_desc_, top_desc_;
-
-  int size_;
-  Dtype alpha_, beta_, k_;
+  cudnnTensorDescriptor_t fwd_bottom_desc_, fwd_top_desc_;
+  cudnnTensorDescriptor_t bwd_bottom_desc_, bwd_top_desc_;
 };
 #endif
 

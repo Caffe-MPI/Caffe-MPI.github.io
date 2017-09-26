@@ -2,6 +2,7 @@
 #ifndef CAFFE_UTIL_DB_LMDB_HPP
 #define CAFFE_UTIL_DB_LMDB_HPP
 
+#include <stdint.h>
 #include <string>
 #include <vector>
 
@@ -10,6 +11,14 @@
 #include "caffe/util/db.hpp"
 
 namespace caffe { namespace db {
+
+#if UINTPTR_MAX == 0xffffffffUL
+/* 32-bit, 1GB */
+    static const size_t LMDB_MAP_SIZE = 1073741824UL;
+#else
+/* 64-bit, 1TB */
+    static const size_t LMDB_MAP_SIZE = 1099511627776ULL;
+#endif
 
 inline void MDB_CHECK(int mdb_status) {
   CHECK_EQ(mdb_status, MDB_SUCCESS) << mdb_strerror(mdb_status);
@@ -25,16 +34,26 @@ class LMDBCursor : public Cursor {
     mdb_cursor_close(mdb_cursor_);
     mdb_txn_abort(mdb_txn_);
   }
-  virtual void SeekToFirst() { Seek(MDB_FIRST); }
-  virtual void Next() { Seek(MDB_NEXT); }
-  virtual string key() {
+  void SeekToFirst() override { Seek(MDB_FIRST); }
+  void Next() override { Seek(MDB_NEXT); }
+  string key() const override {
     return string(static_cast<const char*>(mdb_key_.mv_data), mdb_key_.mv_size);
   }
-  virtual string value() {
+  string value() const override {
     return string(static_cast<const char*>(mdb_value_.mv_data),
         mdb_value_.mv_size);
   }
-  virtual bool valid() { return valid_; }
+  bool parse(Datum& datum) const override {
+    return datum.ParseFromArray(mdb_value_.mv_data, mdb_value_.mv_size);
+  }
+  const void* data() const override {
+    return mdb_value_.mv_data;
+  }
+  size_t size() const override {
+    return mdb_value_.mv_size;
+  }
+
+  bool valid() const override { return valid_; }
 
  private:
   void Seek(MDB_cursor_op op) {
@@ -66,12 +85,12 @@ class LMDBTransaction : public Transaction {
 
   void DoubleMapSize();
 
-  DISABLE_COPY_AND_ASSIGN(LMDBTransaction);
+  DISABLE_COPY_MOVE_AND_ASSIGN(LMDBTransaction);
 };
 
 class LMDB : public DB {
  public:
-  LMDB() : mdb_env_(NULL) { }
+  LMDB() : mdb_env_(NULL), mdb_dbi_() { }
   virtual ~LMDB() { Close(); }
   virtual void Open(const string& source, Mode mode);
   virtual void Close() {

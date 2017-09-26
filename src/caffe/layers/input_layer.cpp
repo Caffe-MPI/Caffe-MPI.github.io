@@ -4,9 +4,9 @@
 
 namespace caffe {
 
-template <typename Dtype>
-void InputLayer<Dtype>::LayerSetUp(const vector<Blob<Dtype>*>& bottom,
-      const vector<Blob<Dtype>*>& top) {
+template <typename Ftype, typename Btype>
+void InputLayer<Ftype, Btype>::LayerSetUp(const vector<Blob*>& bottom,
+      const vector<Blob*>& top) {
   const int num_top = top.size();
   const InputParameter& param = this->layer_param_.input_param();
   const int num_shape = param.shape_size();
@@ -21,7 +21,7 @@ void InputLayer<Dtype>::LayerSetUp(const vector<Blob<Dtype>*>& bottom,
   }
 }
 
-INSTANTIATE_CLASS(InputLayer);
+INSTANTIATE_CLASS_FB(InputLayer);
 REGISTER_LAYER_CLASS(Input);
 
 }  // namespace caffe

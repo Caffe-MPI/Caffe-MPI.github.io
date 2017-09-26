@@ -19,10 +19,10 @@ class EltwiseLayerTest : public MultiDeviceTest<TypeParam> {
 
  protected:
   EltwiseLayerTest()
-      : blob_bottom_a_(new Blob<Dtype>(2, 3, 4, 5)),
-        blob_bottom_b_(new Blob<Dtype>(2, 3, 4, 5)),
-        blob_bottom_c_(new Blob<Dtype>(2, 3, 4, 5)),
-        blob_top_(new Blob<Dtype>()) {
+      : blob_bottom_a_(new TBlob<Dtype>(2, 3, 4, 5)),
+        blob_bottom_b_(new TBlob<Dtype>(2, 3, 4, 5)),
+        blob_bottom_c_(new TBlob<Dtype>(2, 3, 4, 5)),
+        blob_top_(new TBlob<Dtype>()) {
     // fill the values
     Caffe::set_random_seed(1701);
     FillerParameter filler_param;
@@ -41,12 +41,12 @@ class EltwiseLayerTest : public MultiDeviceTest<TypeParam> {
     delete blob_bottom_c_;
     delete blob_top_;
   }
-  Blob<Dtype>* const blob_bottom_a_;
-  Blob<Dtype>* const blob_bottom_b_;
-  Blob<Dtype>* const blob_bottom_c_;
-  Blob<Dtype>* const blob_top_;
-  vector<Blob<Dtype>*> blob_bottom_vec_;
-  vector<Blob<Dtype>*> blob_top_vec_;
+  TBlob<Dtype>* const blob_bottom_a_;
+  TBlob<Dtype>* const blob_bottom_b_;
+  TBlob<Dtype>* const blob_bottom_c_;
+  TBlob<Dtype>* const blob_top_;
+  vector<Blob*> blob_bottom_vec_;
+  vector<Blob*> blob_top_vec_;
 };
 
 TYPED_TEST_CASE(EltwiseLayerTest, TestDtypesAndDevices);
@@ -56,8 +56,8 @@ TYPED_TEST(EltwiseLayerTest, TestSetUp) {
   LayerParameter layer_param;
   EltwiseParameter* eltwise_param = layer_param.mutable_eltwise_param();
   eltwise_param->set_operation(EltwiseParameter_EltwiseOp_PROD);
-  shared_ptr<EltwiseLayer<Dtype> > layer(
-      new EltwiseLayer<Dtype>(layer_param));
+  shared_ptr<EltwiseLayer<Dtype, Dtype> > layer(
+      new EltwiseLayer<Dtype, Dtype>(layer_param));
   layer->SetUp(this->blob_bottom_vec_, this->blob_top_vec_);
   EXPECT_EQ(this->blob_top_->num(), 2);
   EXPECT_EQ(this->blob_top_->channels(), 3);
@@ -70,8 +70,8 @@ TYPED_TEST(EltwiseLayerTest, TestProd) {
   LayerParameter layer_param;
   EltwiseParameter* eltwise_param = layer_param.mutable_eltwise_param();
   eltwise_param->set_operation(EltwiseParameter_EltwiseOp_PROD);
-  shared_ptr<EltwiseLayer<Dtype> > layer(
-      new EltwiseLayer<Dtype>(layer_param));
+  shared_ptr<EltwiseLayer<Dtype, Dtype> > layer(
+      new EltwiseLayer<Dtype, Dtype>(layer_param));
   layer->SetUp(this->blob_bottom_vec_, this->blob_top_vec_);
   layer->Forward(this->blob_bottom_vec_, this->blob_top_vec_);
   const Dtype* data = this->blob_top_->cpu_data();
@@ -80,7 +80,9 @@ TYPED_TEST(EltwiseLayerTest, TestProd) {
   const Dtype* in_data_b = this->blob_bottom_b_->cpu_data();
   const Dtype* in_data_c = this->blob_bottom_c_->cpu_data();
   for (int i = 0; i < count; ++i) {
-    EXPECT_NEAR(data[i], in_data_a[i] * in_data_b[i] * in_data_c[i], 1e-4);
+    EXPECT_NEAR(data[i],
+                in_data_a[i] * in_data_b[i] * in_data_c[i],
+                tol<Dtype>(1e-4, 1e-2));
   }
 }
 
@@ -89,8 +91,8 @@ TYPED_TEST(EltwiseLayerTest, TestSum) {
   LayerParameter layer_param;
   EltwiseParameter* eltwise_param = layer_param.mutable_eltwise_param();
   eltwise_param->set_operation(EltwiseParameter_EltwiseOp_SUM);
-  shared_ptr<EltwiseLayer<Dtype> > layer(
-      new EltwiseLayer<Dtype>(layer_param));
+  shared_ptr<EltwiseLayer<Dtype, Dtype> > layer(
+      new EltwiseLayer<Dtype, Dtype>(layer_param));
   layer->SetUp(this->blob_bottom_vec_, this->blob_top_vec_);
   layer->Forward(this->blob_bottom_vec_, this->blob_top_vec_);
   const Dtype* data = this->blob_top_->cpu_data();
@@ -99,7 +101,9 @@ TYPED_TEST(EltwiseLayerTest, TestSum) {
   const Dtype* in_data_b = this->blob_bottom_b_->cpu_data();
   const Dtype* in_data_c = this->blob_bottom_c_->cpu_data();
   for (int i = 0; i < count; ++i) {
-    EXPECT_NEAR(data[i], in_data_a[i] + in_data_b[i] + in_data_c[i], 1e-4);
+    EXPECT_NEAR(data[i],
+                in_data_a[i] + in_data_b[i] + in_data_c[i],
+                tol<Dtype>(1e-4, 1e-2));
   }
 }
 
@@ -111,8 +115,8 @@ TYPED_TEST(EltwiseLayerTest, TestSumCoeff) {
   eltwise_param->add_coeff(1);
   eltwise_param->add_coeff(-0.5);
   eltwise_param->add_coeff(2);
-  shared_ptr<EltwiseLayer<Dtype> > layer(
-      new EltwiseLayer<Dtype>(layer_param));
+  shared_ptr<EltwiseLayer<Dtype, Dtype> > layer(
+      new EltwiseLayer<Dtype, Dtype>(layer_param));
   layer->SetUp(this->blob_bottom_vec_, this->blob_top_vec_);
   layer->Forward(this->blob_bottom_vec_, this->blob_top_vec_);
   const Dtype* data = this->blob_top_->cpu_data();
@@ -121,8 +125,9 @@ TYPED_TEST(EltwiseLayerTest, TestSumCoeff) {
   const Dtype* in_data_b = this->blob_bottom_b_->cpu_data();
   const Dtype* in_data_c = this->blob_bottom_c_->cpu_data();
   for (int i = 0; i < count; ++i) {
-    EXPECT_NEAR(data[i], in_data_a[i] - 0.5*in_data_b[i] + 2*in_data_c[i],
-        1e-4);
+    EXPECT_NEAR(data[i],
+                in_data_a[i] - 0.5*in_data_b[i] + 2.*in_data_c[i],
+                tol<Dtype>(1e-4, 1e-2));
   }
 }
 
@@ -132,8 +137,9 @@ TYPED_TEST(EltwiseLayerTest, TestStableProdGradient) {
   EltwiseParameter* eltwise_param = layer_param.mutable_eltwise_param();
   eltwise_param->set_operation(EltwiseParameter_EltwiseOp_PROD);
   eltwise_param->set_stable_prod_grad(true);
-  EltwiseLayer<Dtype> layer(layer_param);
-  GradientChecker<Dtype> checker(1e-2, 1e-3);
+  EltwiseLayer<Dtype, Dtype> layer(layer_param);
+  GradientChecker<Dtype> checker(tol<Dtype>(1e-2, 5e-2),
+      tol<Dtype>(1e-3, 1e-2));
   checker.CheckGradientEltwise(&layer, this->blob_bottom_vec_,
       this->blob_top_vec_);
 }
@@ -144,8 +150,9 @@ TYPED_TEST(EltwiseLayerTest, TestUnstableProdGradient) {
   EltwiseParameter* eltwise_param = layer_param.mutable_eltwise_param();
   eltwise_param->set_operation(EltwiseParameter_EltwiseOp_PROD);
   eltwise_param->set_stable_prod_grad(false);
-  EltwiseLayer<Dtype> layer(layer_param);
-  GradientChecker<Dtype> checker(1e-2, 1e-3);
+  EltwiseLayer<Dtype, Dtype> layer(layer_param);
+  GradientChecker<Dtype> checker(tol<Dtype>(1e-2, 5e-2),
+      tol<Dtype>(1e-3, 1e-2));
   checker.CheckGradientEltwise(&layer, this->blob_bottom_vec_,
       this->blob_top_vec_);
 }
@@ -153,10 +160,15 @@ TYPED_TEST(EltwiseLayerTest, TestUnstableProdGradient) {
 TYPED_TEST(EltwiseLayerTest, TestSumGradient) {
   typedef typename TypeParam::Dtype Dtype;
   LayerParameter layer_param;
+  layer_param.set_forward_type(tp<Dtype>());
+  layer_param.set_backward_type(tp<Dtype>());
+  layer_param.set_forward_math(tp<Dtype>());
+  layer_param.set_backward_math(tp<Dtype>());
   EltwiseParameter* eltwise_param = layer_param.mutable_eltwise_param();
   eltwise_param->set_operation(EltwiseParameter_EltwiseOp_SUM);
-  EltwiseLayer<Dtype> layer(layer_param);
-  GradientChecker<Dtype> checker(1e-2, 1e-3);
+  EltwiseLayer<Dtype, Dtype> layer(layer_param);
+  GradientChecker<Dtype> checker(tol<Dtype>(1e-2, 5e-2),
+      tol<Dtype>(1e-3, 5e-2));
   checker.CheckGradientEltwise(&layer, this->blob_bottom_vec_,
       this->blob_top_vec_);
 }
@@ -169,8 +181,8 @@ TYPED_TEST(EltwiseLayerTest, TestSumCoeffGradient) {
   eltwise_param->add_coeff(1);
   eltwise_param->add_coeff(-0.5);
   eltwise_param->add_coeff(2);
-  EltwiseLayer<Dtype> layer(layer_param);
-  GradientChecker<Dtype> checker(1e-2, 1e-3);
+  EltwiseLayer<Dtype, Dtype> layer(layer_param);
+  GradientChecker<Dtype> checker(5e-2, tol<Dtype>(1e-3, 5e-2));
   checker.CheckGradientEltwise(&layer, this->blob_bottom_vec_,
       this->blob_top_vec_);
 }
@@ -180,8 +192,8 @@ TYPED_TEST(EltwiseLayerTest, TestMax) {
   LayerParameter layer_param;
   EltwiseParameter* eltwise_param = layer_param.mutable_eltwise_param();
   eltwise_param->set_operation(EltwiseParameter_EltwiseOp_MAX);
-  shared_ptr<EltwiseLayer<Dtype> > layer(
-      new EltwiseLayer<Dtype>(layer_param));
+  shared_ptr<EltwiseLayer<Dtype, Dtype> > layer(
+      new EltwiseLayer<Dtype, Dtype>(layer_param));
   layer->SetUp(this->blob_bottom_vec_, this->blob_top_vec_);
   layer->Forward(this->blob_bottom_vec_, this->blob_top_vec_);
   const Dtype* data = this->blob_top_->cpu_data();
@@ -200,8 +212,9 @@ TYPED_TEST(EltwiseLayerTest, TestMaxGradient) {
   LayerParameter layer_param;
   EltwiseParameter* eltwise_param = layer_param.mutable_eltwise_param();
   eltwise_param->set_operation(EltwiseParameter_EltwiseOp_MAX);
-  EltwiseLayer<Dtype> layer(layer_param);
-  GradientChecker<Dtype> checker(1e-4, 1e-3);
+  EltwiseLayer<Dtype, Dtype> layer(layer_param);
+  GradientChecker<Dtype> checker(tol<Dtype>(1e-4, 1e-3),
+      tol<Dtype>(1e-3, 5e-1));
   checker.CheckGradientEltwise(&layer, this->blob_bottom_vec_,
       this->blob_top_vec_);
 }

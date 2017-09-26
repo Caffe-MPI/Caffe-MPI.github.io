@@ -14,14 +14,14 @@ __global__ void TanHForward(const int n, const Dtype* in, Dtype* out) {
   }
 }
 
-template <typename Dtype>
-void TanHLayer<Dtype>::Forward_gpu(const vector<Blob<Dtype>*>& bottom,
-    const vector<Blob<Dtype>*>& top) {
-  const Dtype* bottom_data = bottom[0]->gpu_data();
-  Dtype* top_data = top[0]->mutable_gpu_data();
+template <typename Ftype, typename Btype>
+void TanHLayer<Ftype, Btype>::Forward_gpu(const vector<Blob*>& bottom,
+    const vector<Blob*>& top) {
+  const Ftype* bottom_data = bottom[0]->gpu_data<Ftype>();
+  Ftype* top_data = top[0]->mutable_gpu_data<Ftype>();
   const int count = bottom[0]->count();
   // NOLINT_NEXT_LINE(whitespace/operators)
-  TanHForward<Dtype><<<CAFFE_GET_BLOCKS(count), CAFFE_CUDA_NUM_THREADS>>>(
+  TanHForward<<<CAFFE_GET_BLOCKS(count), CAFFE_CUDA_NUM_THREADS, 0, Caffe::thread_stream()>>>(
       count, bottom_data, top_data);
   CUDA_POST_KERNEL_CHECK;
 }
@@ -30,28 +30,27 @@ template <typename Dtype>
 __global__ void TanHBackward(const int n, const Dtype* in_diff,
     const Dtype* out_data, Dtype* out_diff) {
   CUDA_KERNEL_LOOP(index, n) {
-    Dtype tanhx = out_data[index];
-    out_diff[index] = in_diff[index] * (1 - tanhx * tanhx);
+    float tanhx = out_data[index];
+    out_diff[index] = in_diff[index] * (Dtype(1.) - tanhx * tanhx);
   }
 }
 
-template <typename Dtype>
-void TanHLayer<Dtype>::Backward_gpu(const vector<Blob<Dtype>*>& top,
+template <typename Ftype, typename Btype>
+void TanHLayer<Ftype, Btype>::Backward_gpu(const vector<Blob*>& top,
     const vector<bool>& propagate_down,
-    const vector<Blob<Dtype>*>& bottom) {
+    const vector<Blob*>& bottom) {
   if (propagate_down[0]) {
-    const Dtype* top_data = top[0]->gpu_data();
-    const Dtype* top_diff = top[0]->gpu_diff();
-    Dtype* bottom_diff = bottom[0]->mutable_gpu_diff();
+    const Btype* top_data = top[0]->gpu_data<Btype>();
+    const Btype* top_diff = top[0]->gpu_diff<Btype>();
+    Btype* bottom_diff = bottom[0]->mutable_gpu_diff<Btype>();
     const int count = bottom[0]->count();
     // NOLINT_NEXT_LINE(whitespace/operators)
-    TanHBackward<Dtype><<<CAFFE_GET_BLOCKS(count), CAFFE_CUDA_NUM_THREADS>>>(
+    TanHBackward<<<CAFFE_GET_BLOCKS(count), CAFFE_CUDA_NUM_THREADS, 0, Caffe::thread_stream()>>>(
         count, top_diff, top_data, bottom_diff);
     CUDA_POST_KERNEL_CHECK;
   }
 }
 
-INSTANTIATE_LAYER_GPU_FUNCS(TanHLayer);
-
+INSTANTIATE_LAYER_GPU_FUNCS_FB(TanHLayer);
 
 }  // namespace caffe

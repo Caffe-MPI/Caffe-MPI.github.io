@@ -1,8 +1,8 @@
+#include <memory>
 #include <string>
 #include <vector>
 
-#include "boost/scoped_ptr.hpp"
-#include "google/protobuf/text_format.h"
+#include <google/protobuf/text_format.h>
 #include "gtest/gtest.h"
 
 #include "caffe/blob.hpp"
@@ -2893,7 +2893,7 @@ TEST_F(NetUpgradeTest, TestImageNet) {
 
 TEST_F(NetUpgradeTest, TestUpgradeV1LayerType) {
   LayerParameter layer_param;
-  shared_ptr<Layer<float> > layer;
+  shared_ptr<LayerBase> layer;
   for (int i = 0; i < V1LayerParameter_LayerType_LayerType_ARRAYSIZE; ++i) {
     ASSERT_TRUE(V1LayerParameter_LayerType_IsValid(i));
     V1LayerParameter_LayerType v1_type = V1LayerParameter_LayerType(i);
@@ -2908,7 +2908,7 @@ TEST_F(NetUpgradeTest, TestUpgradeV1LayerType) {
       #ifdef USE_LEVELDB
       string tmp;
       MakeTempDir(&tmp);
-      boost::scoped_ptr<db::DB> db(db::GetDB(DataParameter_DB_LEVELDB));
+      std::unique_ptr<db::DB> db(db::GetDB(DataParameter_DB_LEVELDB));
       db->Open(tmp, db::NEW);
       db->Close();
       layer_param.mutable_data_param()->set_source(tmp);
@@ -2921,7 +2921,7 @@ TEST_F(NetUpgradeTest, TestUpgradeV1LayerType) {
      continue;
     }
     #endif  // !USE_OPENCV
-    layer = LayerRegistry<float>::CreateLayer(layer_param);
+    layer = LayerRegistry::CreateLayer(layer_param);
     EXPECT_EQ(v2_layer_type, layer->type());
   }
 }

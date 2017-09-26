@@ -16,11 +16,20 @@ class LevelDBCursor : public Cursor {
   explicit LevelDBCursor(leveldb::Iterator* iter)
     : iter_(iter) { SeekToFirst(); }
   ~LevelDBCursor() { delete iter_; }
-  virtual void SeekToFirst() { iter_->SeekToFirst(); }
-  virtual void Next() { iter_->Next(); }
-  virtual string key() { return iter_->key().ToString(); }
-  virtual string value() { return iter_->value().ToString(); }
-  virtual bool valid() { return iter_->Valid(); }
+  void SeekToFirst() override { iter_->SeekToFirst(); }
+  void Next() override { iter_->Next(); }
+  string key() const override { return iter_->key().ToString(); }
+  string value() const override { return iter_->value().ToString(); }
+  bool parse(Datum& datum) const override {
+    return datum.ParseFromArray(iter_->value().data(), iter_->value().size());
+  }
+  const void* data() const override {
+    return iter_->value().data();
+  }
+  size_t size() const override {
+    return iter_->value().size();
+  }
+  bool valid() const override { return iter_->Valid(); }
 
  private:
   leveldb::Iterator* iter_;
@@ -42,7 +51,7 @@ class LevelDBTransaction : public Transaction {
   leveldb::DB* db_;
   leveldb::WriteBatch batch_;
 
-  DISABLE_COPY_AND_ASSIGN(LevelDBTransaction);
+  DISABLE_COPY_MOVE_AND_ASSIGN(LevelDBTransaction);
 };
 
 class LevelDB : public DB {

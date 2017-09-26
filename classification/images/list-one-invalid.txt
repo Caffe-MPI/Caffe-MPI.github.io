@@ -1,0 +1,6 @@
+/home/greg/ws/digits/examples/classification/images/one.png
+/home/greg/ws/digits/examples/classification/images/three.png
+/home/greg/ws/digits/examples/classification/images/four.png
+/toto/a.jpg
+/home/greg/ws/digits/examples/classification/images/five.png
+http://www.technographics.co.uk/wp-content/uploads/2013/06/resize_1372267720.jpg

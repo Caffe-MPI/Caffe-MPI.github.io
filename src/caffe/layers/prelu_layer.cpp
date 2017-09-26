@@ -8,9 +8,9 @@
 
 namespace caffe {
 
-template <typename Dtype>
-void PReLULayer<Dtype>::LayerSetUp(const vector<Blob<Dtype>*>& bottom,
-    const vector<Blob<Dtype>*>& top) {
+template <typename Ftype, typename Btype>
+void PReLULayer<Ftype, Btype>::LayerSetUp(const vector<Blob*>& bottom,
+    const vector<Blob*>& top) {
   CHECK_GE(bottom[0]->num_axes(), 2)
       << "Number of axes of bottom blob must be >=2.";
   PReLUParameter prelu_param = this->layer_param().prelu_param();
@@ -21,18 +21,18 @@ void PReLULayer<Dtype>::LayerSetUp(const vector<Blob<Dtype>*>& bottom,
   } else {
     this->blobs_.resize(1);
     if (channel_shared_) {
-      this->blobs_[0].reset(new Blob<Dtype>(vector<int>(0)));
+      this->blobs_[0] = Blob::create<Ftype>(vector<int>(0));
     } else {
-      this->blobs_[0].reset(new Blob<Dtype>(vector<int>(1, channels)));
+      this->blobs_[0] = Blob::create<Ftype>(vector<int>(1, channels));
     }
-    shared_ptr<Filler<Dtype> > filler;
+    shared_ptr<Filler<Ftype> > filler;
     if (prelu_param.has_filler()) {
-      filler.reset(GetFiller<Dtype>(prelu_param.filler()));
+      filler.reset(GetFiller<Ftype>(prelu_param.filler()));
     } else {
       FillerParameter filler_param;
       filler_param.set_type("constant");
       filler_param.set_value(0.25);
-      filler.reset(GetFiller<Dtype>(filler_param));
+      filler.reset(GetFiller<Ftype>(filler_param));
     }
     filler->Fill(this->blobs_[0].get());
   }
@@ -48,12 +48,12 @@ void PReLULayer<Dtype>::LayerSetUp(const vector<Blob<Dtype>*>& bottom,
   this->param_propagate_down_.resize(this->blobs_.size(), true);
   multiplier_.Reshape(vector<int>(1, bottom[0]->count(1)));
   backward_buff_.Reshape(vector<int>(1, bottom[0]->count(1)));
-  caffe_set(multiplier_.count(), Dtype(1), multiplier_.mutable_cpu_data());
+  multiplier_.set_data(1.F);
 }
 
-template <typename Dtype>
-void PReLULayer<Dtype>::Reshape(const vector<Blob<Dtype>*>& bottom,
-    const vector<Blob<Dtype>*>& top) {
+template <typename Ftype, typename Btype>
+void PReLULayer<Ftype, Btype>::Reshape(const vector<Blob*>& bottom,
+    const vector<Blob*>& top) {
   CHECK_GE(bottom[0]->num_axes(), 2)
       << "Number of axes of bottom blob must be >=2.";
   top[0]->ReshapeLike(*bottom[0]);
@@ -63,19 +63,19 @@ void PReLULayer<Dtype>::Reshape(const vector<Blob<Dtype>*>& bottom,
   }
 }
 
-template <typename Dtype>
-void PReLULayer<Dtype>::Forward_cpu(const vector<Blob<Dtype>*>& bottom,
-    const vector<Blob<Dtype>*>& top) {
-  const Dtype* bottom_data = bottom[0]->cpu_data();
-  Dtype* top_data = top[0]->mutable_cpu_data();
+template <typename Ftype, typename Btype>
+void PReLULayer<Ftype, Btype>::Forward_cpu(const vector<Blob*>& bottom,
+    const vector<Blob*>& top) {
+  const Ftype* bottom_data = bottom[0]->cpu_data<Ftype>();
+  Ftype* top_data = top[0]->mutable_cpu_data<Ftype>();
   const int count = bottom[0]->count();
   const int dim = bottom[0]->count(2);
   const int channels = bottom[0]->channels();
-  const Dtype* slope_data = this->blobs_[0]->cpu_data();
+  const Ftype* slope_data = this->blobs_[0]->template cpu_data<Ftype>();
 
   // For in-place computation
   if (bottom[0] == top[0]) {
-    caffe_copy(count, bottom_data, bottom_memory_.mutable_cpu_data());
+    caffe_copy<Ftype>(count, bottom_data, bottom_memory_.mutable_cpu_data());
   }
 
   // if channel_shared, channel index in the following computation becomes
@@ -83,25 +83,25 @@ void PReLULayer<Dtype>::Forward_cpu(const vector<Blob<Dtype>*>& bottom,
   const int div_factor = channel_shared_ ? channels : 1;
   for (int i = 0; i < count; ++i) {
     int c = (i / dim) % channels / div_factor;
-    top_data[i] = std::max(bottom_data[i], Dtype(0))
-        + slope_data[c] * std::min(bottom_data[i], Dtype(0));
+    top_data[i] = std::max(bottom_data[i], Ftype(0))
+        + slope_data[c] * std::min(bottom_data[i], Ftype(0));
   }
 }
 
-template <typename Dtype>
-void PReLULayer<Dtype>::Backward_cpu(const vector<Blob<Dtype>*>& top,
+template <typename Ftype, typename Btype>
+void PReLULayer<Ftype, Btype>::Backward_cpu(const vector<Blob*>& top,
     const vector<bool>& propagate_down,
-    const vector<Blob<Dtype>*>& bottom) {
-  const Dtype* bottom_data = bottom[0]->cpu_data();
-  const Dtype* slope_data = this->blobs_[0]->cpu_data();
-  const Dtype* top_diff = top[0]->cpu_diff();
+    const vector<Blob*>& bottom) {
+  const Btype* bottom_data = bottom[0]->cpu_data<Btype>();
+  const Btype* slope_data = this->blobs_[0]->template cpu_data<Btype>();
+  const Btype* top_diff = top[0]->cpu_diff<Btype>();
   const int count = bottom[0]->count();
   const int dim = bottom[0]->count(2);
   const int channels = bottom[0]->channels();
 
   // For in-place computation
   if (top[0] == bottom[0]) {
-    bottom_data = bottom_memory_.cpu_data();
+    bottom_data = bottom_memory_.template cpu_data<Btype>();
   }
 
   // if channel_shared, channel index in the following computation becomes
@@ -113,7 +113,7 @@ void PReLULayer<Dtype>::Backward_cpu(const vector<Blob<Dtype>*>& top,
   // are identical (in-place computaion), we first compute param backward to
   // keep top_diff unchanged.
   if (this->param_propagate_down_[0]) {
-    Dtype* slope_diff = this->blobs_[0]->mutable_cpu_diff();
+    Btype* slope_diff = this->blobs_[0]->template mutable_cpu_diff<Btype>();
     for (int i = 0; i < count; ++i) {
       int c = (i / dim) % channels / div_factor;
       slope_diff[c] += top_diff[i] * bottom_data[i] * (bottom_data[i] <= 0);
@@ -121,7 +121,7 @@ void PReLULayer<Dtype>::Backward_cpu(const vector<Blob<Dtype>*>& top,
   }
   // Propagate to bottom
   if (propagate_down[0]) {
-    Dtype* bottom_diff = bottom[0]->mutable_cpu_diff();
+    Btype* bottom_diff = bottom[0]->mutable_cpu_diff<Btype>();
     for (int i = 0; i < count; ++i) {
       int c = (i / dim) % channels / div_factor;
       bottom_diff[i] = top_diff[i] * ((bottom_data[i] > 0)
@@ -135,7 +135,7 @@ void PReLULayer<Dtype>::Backward_cpu(const vector<Blob<Dtype>*>& top,
 STUB_GPU(PReLULayer);
 #endif
 
-INSTANTIATE_CLASS(PReLULayer);
+INSTANTIATE_CLASS_FB(PReLULayer);
 REGISTER_LAYER_CLASS(PReLU);
 
 }  // namespace caffe

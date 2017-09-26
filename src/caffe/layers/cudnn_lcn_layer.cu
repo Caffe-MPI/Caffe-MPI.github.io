@@ -5,42 +5,57 @@
 
 namespace caffe {
 
-template <typename Dtype>
-void CuDNNLCNLayer<Dtype>::Forward_gpu(const vector<Blob<Dtype>*>& bottom,
-    const vector<Blob<Dtype>*>& top) {
-  const Dtype* bottom_data = bottom[0]->gpu_data();
-  Dtype* top_data = top[0]->mutable_gpu_data();
+template <typename Ftype, typename Btype>
+void CuDNNLCNLayer<Ftype, Btype>::Forward_gpu(const vector<Blob*>& bottom,
+    const vector<Blob*>& top) {
+  const Ftype* bottom_data = bottom[0]->gpu_data<Ftype>();
+  Ftype* top_data = top[0]->mutable_gpu_data<Ftype>();
+
+  temp1_.reserve(tempDataSize_);
+  temp2_.reserve(tempDataSize_);
 
   CUDNN_CHECK(cudnnDivisiveNormalizationForward(
-        handle_, norm_desc_, CUDNN_DIVNORM_PRECOMPUTED_MEANS,
-        cudnn::dataType<Dtype>::one,
-        bottom_desc_, bottom_data,
+        Caffe::cudnn_handle(), norm_desc_, CUDNN_DIVNORM_PRECOMPUTED_MEANS,
+        cudnn::dataType<Ftype>::one,
+        fwd_bottom_desc_, bottom_data,
         NULL,  // srcMeansData
-        this->tempData1, this->tempData2,
-        cudnn::dataType<Dtype>::zero,
-        top_desc_, top_data) );
+        temp1_.data(), temp2_.data(),
+        cudnn::dataType<Ftype>::zero,
+        fwd_top_desc_, top_data) );
+  CUDA_CHECK(cudaStreamSynchronize(Caffe::thread_stream()));
+
+  temp1_.release();
+  temp2_.release();
 }
 
-template <typename Dtype>
-void CuDNNLCNLayer<Dtype>::Backward_gpu(const vector<Blob<Dtype>*>& top,
-    const vector<bool>& propagate_down, const vector<Blob<Dtype>*>& bottom) {
-  const Dtype* top_diff = top[0]->gpu_diff();
-  const Dtype* top_data = top[0]->gpu_data();
-  const Dtype* bottom_data = bottom[0]->gpu_data();
-  Dtype* bottom_diff = bottom[0]->mutable_gpu_diff();
+template <typename Ftype, typename Btype>
+void CuDNNLCNLayer<Ftype, Btype>::Backward_gpu(const vector<Blob*>& top,
+    const vector<bool>& propagate_down, const vector<Blob*>& bottom) {
+  const Btype* top_diff = top[0]->gpu_diff<Btype>();
+  const Btype* top_data = top[0]->gpu_data<Btype>();
+  const Btype* bottom_data = bottom[0]->gpu_data<Btype>();
+  Btype* bottom_diff = bottom[0]->mutable_gpu_diff<Btype>();
+
+  temp1_.reserve(tempDataSize_);
+  temp2_.reserve(tempDataSize_);
 
   CUDNN_CHECK(cudnnDivisiveNormalizationBackward(
-        handle_, norm_desc_, CUDNN_DIVNORM_PRECOMPUTED_MEANS,
-        cudnn::dataType<Dtype>::one,
-        bottom_desc_, bottom_data,
+        Caffe::cudnn_handle(), norm_desc_,
+        CUDNN_DIVNORM_PRECOMPUTED_MEANS,
+        cudnn::dataType<Btype>::one,
+        bwd_bottom_desc_, bottom_data,
         NULL, top_diff,  // NULL - srcMeansData
-        this->tempData1, this->tempData2,
-        cudnn::dataType<Dtype>::zero,
-        bottom_desc_, bottom_diff,
+        temp1_.data(), temp2_.data(),
+        cudnn::dataType<Btype>::zero,
+        bwd_bottom_desc_, bottom_diff,
         NULL) );
+  CUDA_CHECK(cudaStreamSynchronize(Caffe::thread_stream()));
+
+  temp1_.release();
+  temp2_.release();
 }
 
-INSTANTIATE_LAYER_GPU_FUNCS(CuDNNLCNLayer);
+INSTANTIATE_LAYER_GPU_FUNCS_FB(CuDNNLCNLayer);
 
 }  // namespace caffe
 #endif

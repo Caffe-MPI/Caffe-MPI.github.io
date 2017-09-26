@@ -6,9 +6,9 @@
 
 namespace caffe {
 
-template <typename Dtype>
-void SliceLayer<Dtype>::LayerSetUp(const vector<Blob<Dtype>*>& bottom,
-      const vector<Blob<Dtype>*>& top) {
+template <typename Ftype, typename Btype>
+void SliceLayer<Ftype, Btype>::LayerSetUp(const vector<Blob*>& bottom,
+      const vector<Blob*>& top) {
   const SliceParameter& slice_param = this->layer_param_.slice_param();
   CHECK(!(slice_param.has_axis() && slice_param.has_slice_dim()))
       << "Either axis or slice_dim should be specified; not both.";
@@ -18,9 +18,9 @@ void SliceLayer<Dtype>::LayerSetUp(const vector<Blob<Dtype>*>& bottom,
       std::back_inserter(slice_point_));
 }
 
-template <typename Dtype>
-void SliceLayer<Dtype>::Reshape(const vector<Blob<Dtype>*>& bottom,
-      const vector<Blob<Dtype>*>& top) {
+template <typename Ftype, typename Btype>
+void SliceLayer<Ftype, Btype>::Reshape(const vector<Blob*>& bottom,
+      const vector<Blob*>& top) {
   const int num_axes = bottom[0]->num_axes();
   const SliceParameter& slice_param = this->layer_param_.slice_param();
   if (slice_param.has_slice_dim()) {
@@ -72,15 +72,15 @@ void SliceLayer<Dtype>::Reshape(const vector<Blob<Dtype>*>& bottom,
   }
 }
 
-template <typename Dtype>
-void SliceLayer<Dtype>::Forward_cpu(const vector<Blob<Dtype>*>& bottom,
-      const vector<Blob<Dtype>*>& top) {
+template <typename Ftype, typename Btype>
+void SliceLayer<Ftype, Btype>::Forward_cpu(const vector<Blob*>& bottom,
+      const vector<Blob*>& top) {
   if (top.size() == 1) { return; }
   int offset_slice_axis = 0;
-  const Dtype* bottom_data = bottom[0]->cpu_data();
+  const Ftype* bottom_data = bottom[0]->cpu_data<Ftype>();
   const int bottom_slice_axis = bottom[0]->shape(slice_axis_);
   for (int i = 0; i < top.size(); ++i) {
-    Dtype* top_data = top[i]->mutable_cpu_data();
+    Ftype* top_data = top[i]->mutable_cpu_data<Ftype>();
     const int top_slice_axis = top[i]->shape(slice_axis_);
     for (int n = 0; n < num_slices_; ++n) {
       const int top_offset = n * top_slice_axis * slice_size_;
@@ -93,15 +93,15 @@ void SliceLayer<Dtype>::Forward_cpu(const vector<Blob<Dtype>*>& bottom,
   }
 }
 
-template <typename Dtype>
-void SliceLayer<Dtype>::Backward_cpu(const vector<Blob<Dtype>*>& top,
-      const vector<bool>& propagate_down, const vector<Blob<Dtype>*>& bottom) {
+template <typename Ftype, typename Btype>
+void SliceLayer<Ftype, Btype>::Backward_cpu(const vector<Blob*>& top,
+      const vector<bool>& propagate_down, const vector<Blob*>& bottom) {
   if (!propagate_down[0] || top.size() == 1) { return; }
   int offset_slice_axis = 0;
-  Dtype* bottom_diff = bottom[0]->mutable_cpu_diff();
+  Btype* bottom_diff = bottom[0]->mutable_cpu_diff<Btype>();
   const int bottom_slice_axis = bottom[0]->shape(slice_axis_);
   for (int i = 0; i < top.size(); ++i) {
-    const Dtype* top_diff = top[i]->cpu_diff();
+    const Btype* top_diff = top[i]->cpu_diff<Btype>();
     const int top_slice_axis = top[i]->shape(slice_axis_);
     for (int n = 0; n < num_slices_; ++n) {
       const int top_offset = n * top_slice_axis * slice_size_;
@@ -118,7 +118,7 @@ void SliceLayer<Dtype>::Backward_cpu(const vector<Blob<Dtype>*>& top,
 STUB_GPU(SliceLayer);
 #endif
 
-INSTANTIATE_CLASS(SliceLayer);
+INSTANTIATE_CLASS_FB(SliceLayer);
 REGISTER_LAYER_CLASS(Slice);
 
 }  // namespace caffe

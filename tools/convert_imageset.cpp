@@ -10,13 +10,13 @@
 
 #include <algorithm>
 #include <fstream>  // NOLINT(readability/streams)
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "boost/scoped_ptr.hpp"
 #include "gflags/gflags.h"
-#include "glog/logging.h"
+#include <glog/logging.h>
 
 #include "caffe/proto/caffe.pb.h"
 #include "caffe/util/db.hpp"
@@ -26,7 +26,7 @@
 
 using namespace caffe;  // NOLINT(build/namespaces)
 using std::pair;
-using boost::scoped_ptr;
+using std::unique_ptr;
 
 DEFINE_bool(gray, false,
     "When this option is on, treat images as grayscale ones");
@@ -41,7 +41,7 @@ DEFINE_bool(check_size, false,
 DEFINE_bool(encoded, false,
     "When this option is on, the encoded image will be save in datum");
 DEFINE_string(encode_type, "",
-    "Optional: What type should we encode the image as ('png','jpg',...).");
+    "Optional: What type should we encode the image as ('png','jpg', ...).");
 
 int main(int argc, char** argv) {
 #ifdef USE_OPENCV
@@ -73,13 +73,10 @@ int main(int argc, char** argv) {
 
   std::ifstream infile(argv[2]);
   std::vector<std::pair<std::string, int> > lines;
-  std::string line;
-  size_t pos;
+  std::string filename;
   int label;
-  while (std::getline(infile, line)) {
-    pos = line.find_last_of(' ');
-    label = atoi(line.substr(pos + 1).c_str());
-    lines.push_back(std::make_pair(line.substr(0, pos), label));
+  while (infile >> filename >> label) {
+    lines.push_back(std::make_pair(filename, label));
   }
   if (FLAGS_shuffle) {
     // randomly shuffle data
@@ -95,9 +92,9 @@ int main(int argc, char** argv) {
   int resize_width = std::max<int>(0, FLAGS_resize_width);
 
   // Create new DB
-  scoped_ptr<db::DB> db(db::GetDB(FLAGS_backend));
+  unique_ptr<db::DB> db(db::GetDB(FLAGS_backend));
   db->Open(argv[3], db::NEW);
-  scoped_ptr<db::Transaction> txn(db->NewTransaction());
+  unique_ptr<db::Transaction> txn(db->NewTransaction());
 
   // Storing to db
   std::string root_folder(argv[1]);

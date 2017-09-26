@@ -8,9 +8,9 @@
 
 namespace caffe {
 
-template <typename Dtype>
-void HDF5OutputLayer<Dtype>::LayerSetUp(const vector<Blob<Dtype>*>& bottom,
-    const vector<Blob<Dtype>*>& top) {
+template <typename Ftype, typename Btype>
+void HDF5OutputLayer<Ftype, Btype>::LayerSetUp(const vector<Blob*>& bottom,
+    const vector<Blob*>& top) {
   file_name_ = this->layer_param_.hdf5_output_param().file_name();
   file_id_ = H5Fcreate(file_name_.c_str(), H5F_ACC_TRUNC, H5P_DEFAULT,
                        H5P_DEFAULT);
@@ -18,16 +18,16 @@ void HDF5OutputLayer<Dtype>::LayerSetUp(const vector<Blob<Dtype>*>& bottom,
   file_opened_ = true;
 }
 
-template <typename Dtype>
-HDF5OutputLayer<Dtype>::~HDF5OutputLayer<Dtype>() {
+template <typename Ftype, typename Btype>
+HDF5OutputLayer<Ftype, Btype>::~HDF5OutputLayer<Ftype, Btype>() {
   if (file_opened_) {
     herr_t status = H5Fclose(file_id_);
     CHECK_GE(status, 0) << "Failed to close HDF5 file " << file_name_;
   }
 }
 
-template <typename Dtype>
-void HDF5OutputLayer<Dtype>::SaveBlobs() {
+template <typename Ftype, typename Btype>
+void HDF5OutputLayer<Ftype, Btype>::SaveBlobs() {
   // TODO: no limit on the number of blobs
   LOG(INFO) << "Saving HDF5 file " << file_name_;
   CHECK_EQ(data_blob_.num(), label_blob_.num()) <<
@@ -37,9 +37,9 @@ void HDF5OutputLayer<Dtype>::SaveBlobs() {
   LOG(INFO) << "Successfully saved " << data_blob_.num() << " rows";
 }
 
-template <typename Dtype>
-void HDF5OutputLayer<Dtype>::Forward_cpu(const vector<Blob<Dtype>*>& bottom,
-      const vector<Blob<Dtype>*>& top) {
+template <typename Ftype, typename Btype>
+void HDF5OutputLayer<Ftype, Btype>::Forward_cpu(const vector<Blob*>& bottom,
+      const vector<Blob*>& top) {
   CHECK_GE(bottom.size(), 2);
   CHECK_EQ(bottom[0]->num(), bottom[1]->num());
   data_blob_.Reshape(bottom[0]->num(), bottom[0]->channels(),
@@ -50,17 +50,17 @@ void HDF5OutputLayer<Dtype>::Forward_cpu(const vector<Blob<Dtype>*>& bottom,
   const int label_datum_dim = bottom[1]->count() / bottom[1]->num();
 
   for (int i = 0; i < bottom[0]->num(); ++i) {
-    caffe_copy(data_datum_dim, &bottom[0]->cpu_data()[i * data_datum_dim],
+    caffe_copy(data_datum_dim, &bottom[0]->cpu_data<Ftype>()[i * data_datum_dim],
         &data_blob_.mutable_cpu_data()[i * data_datum_dim]);
-    caffe_copy(label_datum_dim, &bottom[1]->cpu_data()[i * label_datum_dim],
+    caffe_copy(label_datum_dim, &bottom[1]->cpu_data<Ftype>()[i * label_datum_dim],
         &label_blob_.mutable_cpu_data()[i * label_datum_dim]);
   }
   SaveBlobs();
 }
 
-template <typename Dtype>
-void HDF5OutputLayer<Dtype>::Backward_cpu(const vector<Blob<Dtype>*>& top,
-      const vector<bool>& propagate_down, const vector<Blob<Dtype>*>& bottom) {
+template <typename Ftype, typename Btype>
+void HDF5OutputLayer<Ftype, Btype>::Backward_cpu(const vector<Blob*>& top,
+      const vector<bool>& propagate_down, const vector<Blob*>& bottom) {
   return;
 }
 
@@ -68,7 +68,7 @@ void HDF5OutputLayer<Dtype>::Backward_cpu(const vector<Blob<Dtype>*>& top,
 STUB_GPU(HDF5OutputLayer);
 #endif
 
-INSTANTIATE_CLASS(HDF5OutputLayer);
+INSTANTIATE_CLASS_FB(HDF5OutputLayer);
 REGISTER_LAYER_CLASS(HDF5Output);
 
 }  // namespace caffe

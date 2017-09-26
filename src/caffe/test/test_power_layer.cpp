@@ -19,8 +19,8 @@ class PowerLayerTest : public MultiDeviceTest<TypeParam> {
 
  protected:
   PowerLayerTest()
-      : blob_bottom_(new Blob<Dtype>(2, 3, 4, 5)),
-        blob_top_(new Blob<Dtype>()) {
+      : blob_bottom_(new TBlob<Dtype>(2, 3, 4, 5)),
+        blob_top_(new TBlob<Dtype>()) {
     Caffe::set_random_seed(1701);
     // fill the values
     FillerParameter filler_param;
@@ -36,7 +36,7 @@ class PowerLayerTest : public MultiDeviceTest<TypeParam> {
     layer_param.mutable_power_param()->set_power(power);
     layer_param.mutable_power_param()->set_scale(scale);
     layer_param.mutable_power_param()->set_shift(shift);
-    PowerLayer<Dtype> layer(layer_param);
+    PowerLayer<Dtype, Dtype> layer(layer_param);
     layer.SetUp(this->blob_bottom_vec_, this->blob_top_vec_);
     layer.Forward(this->blob_bottom_vec_, this->blob_top_vec_);
     // Now, check values
@@ -51,8 +51,8 @@ class PowerLayerTest : public MultiDeviceTest<TypeParam> {
       if (isnan(expected_value)) {
         EXPECT_TRUE(isnan(top_data[i]));
       } else {
-        Dtype precision = std::max(
-          Dtype(std::abs(expected_value * Dtype(1e-4))), min_precision);
+        Dtype precision = std::max(Dtype(std::abs(expected_value * tol<Dtype>(1e-4, 1.e-2))),
+            min_precision);
         EXPECT_NEAR(expected_value, top_data[i], precision);
       }
     }
@@ -63,26 +63,27 @@ class PowerLayerTest : public MultiDeviceTest<TypeParam> {
     layer_param.mutable_power_param()->set_power(power);
     layer_param.mutable_power_param()->set_scale(scale);
     layer_param.mutable_power_param()->set_shift(shift);
-    PowerLayer<Dtype> layer(layer_param);
+    PowerLayer<Dtype, Dtype> layer(layer_param);
     if (power != Dtype(0) && power != Dtype(1) && power != Dtype(2)) {
       // Avoid NaNs by forcing (shift + scale * x) >= 0
       Dtype* bottom_data = this->blob_bottom_->mutable_cpu_data();
-      Dtype min_value = -shift / scale;
+      Dtype min_value = std::max(min_dtype<Dtype>(), Dtype(-shift / scale));
       for (int i = 0; i < this->blob_bottom_->count(); ++i) {
         if (bottom_data[i] < min_value) {
           bottom_data[i] = min_value + (min_value - bottom_data[i]);
         }
       }
     }
-    GradientChecker<Dtype> checker(1e-3, 1e-2, 1701, 0., 0.01);
+    GradientChecker<Dtype> checker(tol<Dtype>(1e-3, 1e-2), tol<Dtype>(1e-2, 5e-1),
+        1701, 0., 0.01);
     checker.CheckGradientEltwise(&layer, this->blob_bottom_vec_,
         this->blob_top_vec_);
   }
 
-  Blob<Dtype>* const blob_bottom_;
-  Blob<Dtype>* const blob_top_;
-  vector<Blob<Dtype>*> blob_bottom_vec_;
-  vector<Blob<Dtype>*> blob_top_vec_;
+  TBlob<Dtype>* const blob_bottom_;
+  TBlob<Dtype>* const blob_top_;
+  vector<Blob*> blob_bottom_vec_;
+  vector<Blob*> blob_top_vec_;
 };
 
 TYPED_TEST_CASE(PowerLayerTest, TestDtypesAndDevices);
@@ -91,7 +92,7 @@ TYPED_TEST(PowerLayerTest, TestPower) {
   typedef typename TypeParam::Dtype Dtype;
   Dtype power = 0.37;
   Dtype scale = 0.83;
-  Dtype shift = -2.4;
+  Dtype shift = 3.4;
   this->TestForward(power, scale, shift);
 }
 

@@ -37,11 +37,11 @@ namespace caffe {
  * @param top output Blob vector (length 1)
  *   -# @f$ (1 \times 1 \times 1 \times 1) @f$
  *      the computed cross-entropy classification loss: @f$ E =
- *        \frac{-1}{N} \sum\limits_{n=1}^N \log(\hat{p}_{n,l_n})
+ *        \frac{-1}{N} \sum\limits_{n=1}^N \log(\hat{p}_{n, l_n})
  *      @f$, for softmax output class probabilites @f$ \hat{p} @f$
  */
-template <typename Dtype>
-class SoftmaxWithLossLayer : public LossLayer<Dtype> {
+template <typename Ftype, typename Btype>
+class SoftmaxWithLossLayer : public LossLayer<Ftype, Btype> {
  public:
    /**
     * @param param provides LossParameter loss_param, with options:
@@ -52,11 +52,11 @@ class SoftmaxWithLossLayer : public LossLayer<Dtype> {
     *    present; otherwise the loss is simply summed over spatial locations.
     */
   explicit SoftmaxWithLossLayer(const LayerParameter& param)
-      : LossLayer<Dtype>(param) {}
-  virtual void LayerSetUp(const vector<Blob<Dtype>*>& bottom,
-      const vector<Blob<Dtype>*>& top);
-  virtual void Reshape(const vector<Blob<Dtype>*>& bottom,
-      const vector<Blob<Dtype>*>& top);
+      : LossLayer<Ftype, Btype>(param) {}
+  virtual void LayerSetUp(const vector<Blob*>& bottom,
+      const vector<Blob*>& top);
+  virtual void Reshape(const vector<Blob*>& bottom,
+      const vector<Blob*>& top);
 
   virtual inline const char* type() const { return "SoftmaxWithLoss"; }
   virtual inline int ExactNumTopBlobs() const { return -1; }
@@ -64,10 +64,10 @@ class SoftmaxWithLossLayer : public LossLayer<Dtype> {
   virtual inline int MaxTopBlobs() const { return 2; }
 
  protected:
-  virtual void Forward_cpu(const vector<Blob<Dtype>*>& bottom,
-      const vector<Blob<Dtype>*>& top);
-  virtual void Forward_gpu(const vector<Blob<Dtype>*>& bottom,
-      const vector<Blob<Dtype>*>& top);
+  virtual void Forward_cpu(const vector<Blob*>& bottom,
+      const vector<Blob*>& top);
+  virtual void Forward_gpu(const vector<Blob*>& bottom,
+      const vector<Blob*>& top);
   /**
    * @brief Computes the softmax loss error gradient w.r.t. the predictions.
    *
@@ -95,26 +95,26 @@ class SoftmaxWithLossLayer : public LossLayer<Dtype> {
    *   -# @f$ (N \times 1 \times 1 \times 1) @f$
    *      the labels -- ignored as we can't compute their error gradients
    */
-  virtual void Backward_cpu(const vector<Blob<Dtype>*>& top,
-      const vector<bool>& propagate_down, const vector<Blob<Dtype>*>& bottom);
-  virtual void Backward_gpu(const vector<Blob<Dtype>*>& top,
-      const vector<bool>& propagate_down, const vector<Blob<Dtype>*>& bottom);
+  virtual void Backward_cpu(const vector<Blob*>& top,
+      const vector<bool>& propagate_down, const vector<Blob*>& bottom);
+  virtual void Backward_gpu(const vector<Blob*>& top,
+      const vector<bool>& propagate_down, const vector<Blob*>& bottom);
 
   /// Read the normalization mode parameter and compute the normalizer based
   /// on the blob size.  If normalization_mode is VALID, the count of valid
   /// outputs will be read from valid_count, unless it is -1 in which case
   /// all outputs are assumed to be valid.
-  virtual Dtype get_normalizer(
+  float get_normalizer(
       LossParameter_NormalizationMode normalization_mode, int valid_count);
 
   /// The internal SoftmaxLayer used to map predictions to a distribution.
-  shared_ptr<Layer<Dtype> > softmax_layer_;
+  shared_ptr<Layer<Ftype, Btype> > softmax_layer_;
   /// prob stores the output probability predictions from the SoftmaxLayer.
-  Blob<Dtype> prob_;
+  TBlob<Ftype> prob_;  // Conversion if Ftype!=Btype
   /// bottom vector holder used in call to the underlying SoftmaxLayer::Forward
-  vector<Blob<Dtype>*> softmax_bottom_vec_;
+  vector<Blob*> softmax_bottom_vec_;
   /// top vector holder used in call to the underlying SoftmaxLayer::Forward
-  vector<Blob<Dtype>*> softmax_top_vec_;
+  vector<Blob*> softmax_top_vec_;
   /// Whether to ignore instances with a certain label.
   bool has_ignore_label_;
   /// The label indicating that an instance should be ignored.

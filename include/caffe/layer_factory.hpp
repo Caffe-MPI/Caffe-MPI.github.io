@@ -3,7 +3,7 @@
  * During runtime, registered layers could be called by passing a LayerParameter
  * protobuffer to the CreateLayer function:
  *
- *     LayerRegistry<Dtype>::CreateLayer(param);
+ *     LayerRegistry::CreateLayer(param);
  *
  * There are two ways to register a layer. Assuming that we have a layer like:
  *
@@ -49,18 +49,76 @@
 
 namespace caffe {
 
-template <typename Dtype>
-class Layer;
+class LayerBase;
 
-template <typename Dtype>
+template<template <typename Ftype, typename Btype> class LayerType>
+inline shared_ptr<LayerBase> CreateLayerBase(const LayerParameter& param,
+    Type ftype, Type btype) {
+  bool failed = false;
+  shared_ptr<LayerBase> ptr;
+  if (ftype == FLOAT) {
+    if (btype == FLOAT) {
+      ptr.reset(new LayerType<float, float>(param));
+    }
+#ifndef CPU_ONLY
+    else if (btype == FLOAT16) {
+      ptr.reset(new LayerType<float, float16>(param));
+    }
+#endif
+    else if (btype == DOUBLE) {
+      ptr.reset(new LayerType<float, double>(param));
+    } else {
+      failed = true;
+    }
+  }
+#ifndef CPU_ONLY
+  else if (ftype == FLOAT16) {
+    if (btype == FLOAT) {
+      ptr.reset(new LayerType<float16, float>(param));
+    } else if (btype == FLOAT16) {
+      ptr.reset(new LayerType<float16, float16>(param));
+    } else if (btype == DOUBLE) {
+      ptr.reset(new LayerType<float16, double>(param));
+    } else {
+      failed = true;
+    }
+  }
+#endif
+  else if (ftype == DOUBLE) {
+    if (btype == FLOAT) {
+      ptr.reset(new LayerType<double, float>(param));
+    }
+#ifndef CPU_ONLY
+    else if (btype == FLOAT16) {
+      ptr.reset(new LayerType<double, float16>(param));
+    }
+#endif
+    else if (btype == DOUBLE) {
+      ptr.reset(new LayerType<double, double>(param));
+    } else {
+      failed = true;
+    }
+  } else {
+    failed = true;
+  }
+
+  if (failed) {
+    LOG(FATAL) << "Combination of layer types " << Type_Name(ftype) << " and "
+        << Type_Name(btype) << " is not currently supported "
+        << "(discovered in layer '" << param.name() << "').";
+  }
+  CHECK_NOTNULL(ptr.get());
+  return ptr;
+}
+
 class LayerRegistry {
  public:
-  typedef shared_ptr<Layer<Dtype> > (*Creator)(const LayerParameter&);
+  typedef shared_ptr<LayerBase> (*Creator)(const LayerParameter&, Type, Type);
   typedef std::map<string, Creator> CreatorRegistry;
 
   static CreatorRegistry& Registry() {
-    static CreatorRegistry* g_registry_ = new CreatorRegistry();
-    return *g_registry_;
+    static CreatorRegistry g_registry_;
+    return g_registry_;
   }
 
   // Adds a creator.
@@ -71,16 +129,28 @@ class LayerRegistry {
     registry[type] = creator;
   }
 
-  // Get a layer using a LayerParameter.
-  static shared_ptr<Layer<Dtype> > CreateLayer(const LayerParameter& param) {
+  static shared_ptr<LayerBase> CreateLayer(const LayerParameter& param) {
+    const string& layer_type = param.type();
+    const string& layer_name = param.name();
     if (Caffe::root_solver()) {
-      LOG(INFO) << "Creating layer " << param.name();
+      LOG(INFO) << "Creating layer '" << layer_name << "' of type '" << layer_type << "'";
     }
-    const string& type = param.type();
     CreatorRegistry& registry = Registry();
-    CHECK_EQ(registry.count(type), 1) << "Unknown layer type: " << type
-        << " (known types: " << LayerTypeListString() << ")";
-    return registry[type](param);
+    CHECK_EQ(registry.count(layer_type), 1) << "Unknown layer type: '" << layer_type
+        << "' (known types: " << LayerTypeListString() << ")";
+
+    //  We compose these types in Net::Init
+    Type ftype = param.forward_type();
+    Type btype = param.backward_type();
+    Type fmath = param.forward_math();
+    Type bmath = param.backward_math();
+    if (Caffe::root_solver()) {
+      LOG(INFO) << "Layer's types are Ftype:" << Type_Name(ftype)
+          << " Btype:" << Type_Name(btype)
+          << " Fmath:" << Type_Name(fmath)
+          << " Bmath:" << Type_Name(bmath);
+    }
+    return registry[layer_type](param, ftype, btype);
   }
 
   static vector<string> LayerTypeList() {
@@ -112,29 +182,26 @@ class LayerRegistry {
   }
 };
 
-
-template <typename Dtype>
 class LayerRegisterer {
  public:
   LayerRegisterer(const string& type,
-                  shared_ptr<Layer<Dtype> > (*creator)(const LayerParameter&)) {
-    // LOG(INFO) << "Registering layer type: " << type;
-    LayerRegistry<Dtype>::AddCreator(type, creator);
+      shared_ptr<LayerBase> (*creator)(const LayerParameter&, Type, Type)) {
+    LayerRegistry::AddCreator(type, creator);
   }
 };
 
-
 #define REGISTER_LAYER_CREATOR(type, creator)                                  \
-  static LayerRegisterer<float> g_creator_f_##type(#type, creator<float>);     \
-  static LayerRegisterer<double> g_creator_d_##type(#type, creator<double>)    \
+  static LayerRegisterer g_creator_##type(#type, creator);
 
 #define REGISTER_LAYER_CLASS(type)                                             \
-  template <typename Dtype>                                                    \
-  shared_ptr<Layer<Dtype> > Creator_##type##Layer(const LayerParameter& param) \
+  shared_ptr<LayerBase> Creator_##type##Layer(const LayerParameter& param,     \
+                                              Type ftype, Type btype)          \
   {                                                                            \
-    return shared_ptr<Layer<Dtype> >(new type##Layer<Dtype>(param));           \
+    return CreateLayerBase<type##Layer>(param, ftype, btype);                  \
   }                                                                            \
   REGISTER_LAYER_CREATOR(type, Creator_##type##Layer)
+
+void check_precision_support(Type& ftype, Type& btype, LayerParameter& param);
 
 }  // namespace caffe
 

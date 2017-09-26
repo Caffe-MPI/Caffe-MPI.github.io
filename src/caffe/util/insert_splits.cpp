@@ -5,6 +5,7 @@
 #include <utility>
 
 #include "caffe/common.hpp"
+#include "caffe/type.hpp"
 #include "caffe/util/insert_splits.hpp"
 
 namespace caffe {
@@ -19,9 +20,54 @@ void InsertSplits(const NetParameter& param, NetParameter* param_split) {
   map<pair<int, int>, float> top_idx_to_loss_weight;
   map<pair<int, int>, int> top_idx_to_bottom_split_idx;
   map<int, string> layer_idx_to_layer_name;
+  map<int, Type> layer_idx_to_layer_fwd_type, layer_idx_to_layer_bwd_type,
+      layer_idx_to_layer_fwd_math, layer_idx_to_layer_bwd_math;
+
+  Type default_fmath, default_bmath;
+  if (param.has_default_forward_math()) {
+    default_fmath = param.default_forward_math();
+  } else {
+    default_fmath = tpm(tp<float>(), param.default_forward_type());
+  }
+  if (param.has_default_backward_math()) {
+    default_bmath = param.default_backward_math();
+  } else {
+    default_bmath = tpm(tp<float>(), param.default_backward_type());
+  }
+
+  Type fwd_type, bwd_type, fwd_math, bwd_math;
   for (int i = 0; i < param.layer_size(); ++i) {
     const LayerParameter& layer_param = param.layer(i);
     layer_idx_to_layer_name[i] = layer_param.name();
+
+    if (!layer_param.has_forward_math()) {
+      if (layer_param.has_forward_type()) {
+        fwd_math = tpm(tp<float>(), layer_param.forward_type());
+      } else {
+        fwd_math = default_fmath;
+      }
+    } else {
+      fwd_math = layer_param.forward_math();
+    }
+    if (!layer_param.has_backward_math()) {
+      if (layer_param.has_backward_type()) {
+        bwd_math = tpm(tp<float>(), layer_param.backward_type());
+      } else {
+        bwd_math = default_bmath;
+      }
+    } else {
+      bwd_math = layer_param.backward_math();
+    }
+
+    fwd_type = layer_param.has_forward_type() ?
+               layer_param.forward_type() : param.default_forward_type();
+    bwd_type = layer_param.has_backward_type() ?
+               layer_param.backward_type() : param.default_backward_type();
+
+    layer_idx_to_layer_fwd_type[i] = fwd_type;
+    layer_idx_to_layer_bwd_type[i] = bwd_type;
+    layer_idx_to_layer_fwd_math[i] = fwd_math;
+    layer_idx_to_layer_bwd_math[i] = bwd_math;
     for (int j = 0; j < layer_param.bottom_size(); ++j) {
       const string& blob_name = layer_param.bottom(j);
       if (blob_name_to_last_top_idx.find(blob_name) ==
@@ -73,11 +119,16 @@ void InsertSplits(const NetParameter& param, NetParameter* param_split) {
       const int split_count = top_idx_to_bottom_count[top_idx];
       if (split_count > 1) {
         const string& layer_name = layer_idx_to_layer_name[i];
+        Type fwd_type = layer_idx_to_layer_fwd_type[i];
+        Type bwd_type = layer_idx_to_layer_bwd_type[i];
+        Type fwd_math = layer_idx_to_layer_fwd_math[i];
+        Type bwd_math = layer_idx_to_layer_bwd_math[i];
         const string& blob_name = layer_param->top(j);
         LayerParameter* split_layer_param = param_split->add_layer();
         const float loss_weight = top_idx_to_loss_weight[top_idx];
         ConfigureSplitLayer(layer_name, blob_name, j, split_count,
-            loss_weight, split_layer_param);
+            loss_weight, fwd_type, bwd_type, fwd_math, bwd_math,
+            split_layer_param);
         if (loss_weight) {
           layer_param->clear_loss_weight();
           top_idx_to_bottom_split_idx[top_idx]++;
@@ -89,11 +140,16 @@ void InsertSplits(const NetParameter& param, NetParameter* param_split) {
 
 void ConfigureSplitLayer(const string& layer_name, const string& blob_name,
     const int blob_idx, const int split_count, const float loss_weight,
+    Type fwd_type, Type bwd_type, Type fwd_math, Type bwd_math,
     LayerParameter* split_layer_param) {
   split_layer_param->Clear();
   split_layer_param->add_bottom(blob_name);
   split_layer_param->set_name(SplitLayerName(layer_name, blob_name, blob_idx));
   split_layer_param->set_type("Split");
+  split_layer_param->set_forward_type(fwd_type);
+  split_layer_param->set_backward_type(bwd_type);
+  split_layer_param->set_forward_math(fwd_math);
+  split_layer_param->set_backward_math(bwd_math);
   for (int k = 0; k < split_count; ++k) {
     split_layer_param->add_top(
         SplitBlobName(layer_name, blob_name, blob_idx, k));

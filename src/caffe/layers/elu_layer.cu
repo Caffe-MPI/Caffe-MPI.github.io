@@ -7,22 +7,22 @@ namespace caffe {
 
 template <typename Dtype>
 __global__ void ELUForward(const int n, const Dtype* in, Dtype* out,
-    Dtype alpha) {
+    float alpha) {
   CUDA_KERNEL_LOOP(index, n) {
     out[index] = in[index] > 0 ? in[index] :
-        alpha * (exp(in[index]) - 1);
+        Dtype(alpha * (exp(in[index]) - 1.));
   }
 }
 
-template <typename Dtype>
-void ELULayer<Dtype>::Forward_gpu(const vector<Blob<Dtype>*>& bottom,
-    const vector<Blob<Dtype>*>& top) {
-  const Dtype* bottom_data = bottom[0]->gpu_data();
-  Dtype* top_data = top[0]->mutable_gpu_data();
+template <typename Ftype, typename Btype>
+void ELULayer<Ftype, Btype>::Forward_gpu(const vector<Blob*>& bottom,
+    const vector<Blob*>& top) {
+  const Ftype* bottom_data = bottom[0]->gpu_data<Ftype>();
+  Ftype* top_data = top[0]->mutable_gpu_data<Ftype>();
   const int count = bottom[0]->count();
-  Dtype alpha = this->layer_param_.elu_param().alpha();
+  float alpha = this->layer_param_.elu_param().alpha();
   // NOLINT_NEXT_LINE(whitespace/operators)
-  ELUForward<Dtype><<<CAFFE_GET_BLOCKS(count), CAFFE_CUDA_NUM_THREADS>>>(
+  ELUForward<<<CAFFE_GET_BLOCKS(count), CAFFE_CUDA_NUM_THREADS, 0, Caffe::thread_stream()>>>(
       count, bottom_data, top_data, alpha);
   CUDA_POST_KERNEL_CHECK;
 }
@@ -30,33 +30,33 @@ void ELULayer<Dtype>::Forward_gpu(const vector<Blob<Dtype>*>& bottom,
 template <typename Dtype>
 __global__ void ELUBackward(const int n, const Dtype* in_diff,
     const Dtype* out_data, const Dtype* in_data,
-    Dtype* out_diff, Dtype alpha) {
+    Dtype* out_diff, float alpha) {
   CUDA_KERNEL_LOOP(index, n) {
     out_diff[index] = in_data[index] > 0 ? in_diff[index] :
-        in_diff[index] * (out_data[index] + alpha);
+        Dtype(in_diff[index] * (out_data[index] + alpha));
   }
 }
 
-template <typename Dtype>
-void ELULayer<Dtype>::Backward_gpu(const vector<Blob<Dtype>*>& top,
+template <typename Ftype, typename Btype>
+void ELULayer<Ftype, Btype>::Backward_gpu(const vector<Blob*>& top,
     const vector<bool>& propagate_down,
-    const vector<Blob<Dtype>*>& bottom) {
+    const vector<Blob*>& bottom) {
   if (propagate_down[0]) {
-    const Dtype* bottom_data = bottom[0]->gpu_data();
-    const Dtype* top_diff = top[0]->gpu_diff();
-    const Dtype* top_data = top[0]->gpu_data();
-    Dtype* bottom_diff = bottom[0]->mutable_gpu_diff();
+    const Btype* bottom_data = bottom[0]->gpu_data<Btype>();
+    const Btype* top_diff = top[0]->gpu_diff<Btype>();
+    const Btype* top_data = top[0]->gpu_data<Btype>();
+    Btype* bottom_diff = bottom[0]->mutable_gpu_diff<Btype>();
     const int count = bottom[0]->count();
-    Dtype alpha = this->layer_param_.elu_param().alpha();
+    float alpha = this->layer_param_.elu_param().alpha();
     // NOLINT_NEXT_LINE(whitespace/operators)
-    ELUBackward<Dtype><<<CAFFE_GET_BLOCKS(count), CAFFE_CUDA_NUM_THREADS>>>(
+    ELUBackward<<<CAFFE_GET_BLOCKS(count), CAFFE_CUDA_NUM_THREADS, 0, Caffe::thread_stream()>>>(
         count, top_diff, top_data, bottom_data, bottom_diff, alpha);
     CUDA_POST_KERNEL_CHECK;
   }
 }
 
 
-INSTANTIATE_LAYER_GPU_FUNCS(ELULayer);
+INSTANTIATE_LAYER_GPU_FUNCS_FB(ELULayer);
 
 
 }  // namespace caffe

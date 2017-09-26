@@ -15,28 +15,24 @@ namespace caffe {
  *
  * TODO(dox): thorough documentation for Forward, Backward, and proto params.
  */
-template <typename Dtype>
-class SplitLayer : public Layer<Dtype> {
+template <typename Ftype, typename Btype>
+class SplitLayer : public Layer<Ftype, Btype> {
  public:
   explicit SplitLayer(const LayerParameter& param)
-      : Layer<Dtype>(param) {}
-  virtual void Reshape(const vector<Blob<Dtype>*>& bottom,
-      const vector<Blob<Dtype>*>& top);
+      : Layer<Ftype, Btype>(param) {}
+  void Reshape(const vector<Blob*>& bottom, const vector<Blob*>& top) override;
 
-  virtual inline const char* type() const { return "Split"; }
-  virtual inline int ExactNumBottomBlobs() const { return 1; }
-  virtual inline int MinTopBlobs() const { return 1; }
+  const char* type() const override { return "Split"; }
+  int ExactNumBottomBlobs() const override { return 1; }
+  int MinTopBlobs() const override { return 1; }
 
  protected:
-  virtual void Forward_cpu(const vector<Blob<Dtype>*>& bottom,
-      const vector<Blob<Dtype>*>& top);
-  virtual void Forward_gpu(const vector<Blob<Dtype>*>& bottom,
-      const vector<Blob<Dtype>*>& top);
-  virtual void Backward_cpu(const vector<Blob<Dtype>*>& top,
-      const vector<bool>& propagate_down, const vector<Blob<Dtype>*>& bottom);
-  virtual void Backward_gpu(const vector<Blob<Dtype>*>& top,
-      const vector<bool>& propagate_down, const vector<Blob<Dtype>*>& bottom);
-
+  void Forward_cpu(const vector<Blob*>& bottom, const vector<Blob*>& top) override;
+  void Forward_gpu(const vector<Blob*>& bottom, const vector<Blob*>& top) override;
+  void Backward_cpu(const vector<Blob*>& top, const vector<bool>& propagate_down,
+      const vector<Blob*>& bottom) override;
+  void Backward_gpu(const vector<Blob*>& top, const vector<bool>& propagate_down,
+      const vector<Blob*>& bottom) override;
   int count_;
 };
 

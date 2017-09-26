@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # install dependencies
 # (this script must be run as root)
 
@@ -40,30 +40,25 @@ else
     python3-skimage
 
   # build Protobuf3 since it's needed for Python3
-  PROTOBUF3_DIR=~/protobuf3
+  echo "Building protobuf3 from source ..."
   pushd .
-  if [ -d "$PROTOBUF3_DIR" ] && [ -e "$PROTOBUF3_DIR/src/protoc" ]; then
-    echo "Using cached protobuf3 build ..."
-    cd $PROTOBUF3_DIR
-  else
-    echo "Building protobuf3 from source ..."
-    rm -rf $PROTOBUF3_DIR
-    mkdir $PROTOBUF3_DIR
+  PROTOBUF3_DIR=~/protobuf3-build
+  rm -rf $PROTOBUF3_DIR
+  mkdir $PROTOBUF3_DIR
 
-    # install some more dependencies required to build protobuf3
-    apt-get install -y --no-install-recommends \
-      curl \
-      dh-autoreconf \
-      unzip
+  # install some more dependencies required to build protobuf3
+  apt-get install -y --no-install-recommends \
+    curl \
+    dh-autoreconf \
+    unzip
 
-    wget https://github.com/google/protobuf/archive/v3.0.0-beta-3.tar.gz -O protobuf3.tar.gz
-    tar -xzf protobuf3.tar.gz -C $PROTOBUF3_DIR --strip 1
-    rm protobuf3.tar.gz
-    cd $PROTOBUF3_DIR
-    ./autogen.sh
-    ./configure --prefix=/usr
-    make --jobs=$NUM_THREADS
-  fi
+  wget https://github.com/google/protobuf/archive/3.0.x.tar.gz -O protobuf3.tar.gz
+  tar -xzf protobuf3.tar.gz -C $PROTOBUF3_DIR --strip 1
+  rm protobuf3.tar.gz
+  cd $PROTOBUF3_DIR
+  ./autogen.sh
+  ./configure --prefix=/usr
+  make --jobs=$NUM_THREADS
   make install
   popd
 fi
@@ -84,7 +79,7 @@ if $WITH_CUDA ; then
   rm $CUDA_REPO_PKG
 
   if $WITH_CUDNN ; then
-    ML_REPO_PKG=nvidia-machine-learning-repo_4.0-2_amd64.deb
+    ML_REPO_PKG=nvidia-machine-learning-repo-ubuntu1404_4.0-2_amd64.deb
     wget http://developer.download.nvidia.com/compute/machine-learning/repos/ubuntu1404/x86_64/$ML_REPO_PKG
     dpkg -i $ML_REPO_PKG
   fi
@@ -93,18 +88,19 @@ if $WITH_CUDA ; then
   apt-get -y update
 
   # install packages
-  CUDA_PKG_VERSION="7-5"
-  CUDA_VERSION="7.5"
+  CUDA_PKG_VERSION="8-0"
+  CUDA_VERSION="8.0"
   apt-get install -y --no-install-recommends \
     cuda-core-$CUDA_PKG_VERSION \
     cuda-cudart-dev-$CUDA_PKG_VERSION \
     cuda-cublas-dev-$CUDA_PKG_VERSION \
+    cuda-nvml-dev-$CUDA_PKG_VERSION   \
     cuda-curand-dev-$CUDA_PKG_VERSION
   # manually create CUDA symlink
   ln -s /usr/local/cuda-$CUDA_VERSION /usr/local/cuda
 
   if $WITH_CUDNN ; then
-    apt-get install -y --no-install-recommends libcudnn5-dev
+    apt-get install -y --no-install-recommends libcudnn6-dev
   fi
 fi
 
