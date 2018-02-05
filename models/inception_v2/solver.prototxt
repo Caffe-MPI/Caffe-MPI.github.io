@@ -1,0 +1,37 @@
+net: "models/inception_v2/train_val.prototxt"
+
+test_iter: 1562         # 50000/32
+test_interval: 20000	
+test_initialization: false
+
+display: 100
+
+max_iter: 2400000 	# 60 epochs B=32
+base_lr:  0.05
+
+# DGX1 =================================
+# max_iter: 300000 	# 60 epoch B=256
+# base_lr:  0.2 	# B=256
+# ======================================	
+
+lr_policy: "poly"
+power: 2.0
+momentum: 0.9
+weight_decay: 0.0002
+
+snapshot: 600000
+snapshot_prefix: "models/inception_v2/snapshots/inceptionv2"
+snapshot_after_train: true
+
+solver_mode: GPU
+random_seed: 1
+
+# Train dataset size = 1,281,167
+# Test dataset size = 50,000
+
+# batch 64  --> epoch = 20,000
+# batch 96  --> epoch = 15,000
+# batch 128 --> epoch = 10,000 
+# batch 256 --> epoch =  5,000 
+# batch 512 --> epoch =  2,500 
+

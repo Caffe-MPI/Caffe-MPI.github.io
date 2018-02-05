@@ -15,17 +15,17 @@ namespace caffe {
  * Note: because this layer does not change the input values -- merely the
  * dimensions -- it can simply copy the input. The copy happens "virtually"
  * (thus taking effectively 0 real time) by setting, in Forward, the data
- * pointer of the top Blob to that of the bottom Blob (see Blob::ShareData),
+ * pointer of the top TBlob to that of the bottom Blob (see Blob::ShareData),
  * and in Backward, the diff pointer of the bottom Blob to that of the top Blob
  * (see Blob::ShareDiff).
  */
-template <typename Dtype>
-class FlattenLayer : public Layer<Dtype> {
+template <typename Ftype, typename Btype>
+class FlattenLayer : public Layer<Ftype, Btype> {
  public:
   explicit FlattenLayer(const LayerParameter& param)
-      : Layer<Dtype>(param) {}
-  virtual void Reshape(const vector<Blob<Dtype>*>& bottom,
-      const vector<Blob<Dtype>*>& top);
+      : Layer<Ftype, Btype>(param) {}
+  virtual void Reshape(const vector<Blob*>& bottom,
+      const vector<Blob*>& top);
 
   virtual inline const char* type() const { return "Flatten"; }
   virtual inline int ExactNumBottomBlobs() const { return 1; }
@@ -40,8 +40,8 @@ class FlattenLayer : public Layer<Dtype> {
    *   -# @f$ (N \times CHW \times 1 \times 1) @f$
    *      the outputs -- i.e., the (virtually) copied, flattened inputs
    */
-  virtual void Forward_cpu(const vector<Blob<Dtype>*>& bottom,
-      const vector<Blob<Dtype>*>& top);
+  virtual void Forward_cpu(const vector<Blob*>& bottom,
+      const vector<Blob*>& top);
 
   /**
    * @brief Computes the error gradient w.r.t. the concatenate inputs.
@@ -52,8 +52,8 @@ class FlattenLayer : public Layer<Dtype> {
    * @param bottom input Blob vector (length K), into which the top error
    *        gradient is (virtually) copied
    */
-  virtual void Backward_cpu(const vector<Blob<Dtype>*>& top,
-      const vector<bool>& propagate_down, const vector<Blob<Dtype>*>& bottom);
+  virtual void Backward_cpu(const vector<Blob*>& top,
+      const vector<bool>& propagate_down, const vector<Blob*>& bottom);
 };
 
 }  // namespace caffe

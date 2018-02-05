@@ -3,12 +3,12 @@
  * layer factory. During runtime, registered solvers could be called by passing
  * a SolverParameter protobuffer to the CreateSolver function:
  *
- *     SolverRegistry<Dtype>::CreateSolver(param);
+ *     SolverRegistry::CreateSolver(param);
  *
  * There are two ways to register a solver. Assuming that we have a solver like:
  *
  *   template <typename Dtype>
- *   class MyAwesomeSolver : public Solver<Dtype> {
+ *   class MyAwesomeSolver : public Solver {
  *     // your implementations
  *   };
  *
@@ -45,37 +45,43 @@
 #include "caffe/common.hpp"
 #include "caffe/proto/caffe.pb.h"
 
+#ifndef CPU_ONLY
+  #include "caffe/util/float16.hpp"
+#endif
+
+#include "caffe/solver.hpp"
+
 namespace caffe {
 
-template <typename Dtype>
-class Solver;
-
-template <typename Dtype>
 class SolverRegistry {
  public:
-  typedef Solver<Dtype>* (*Creator)(const SolverParameter&);
+  typedef Solver* (*Creator)(const SolverParameter&, size_t, Solver*);
   typedef std::map<string, Creator> CreatorRegistry;
 
   static CreatorRegistry& Registry() {
-    static CreatorRegistry* g_registry_ = new CreatorRegistry();
-    return *g_registry_;
+    static CreatorRegistry g_registry_;
+    return g_registry_;
   }
 
   // Adds a creator.
   static void AddCreator(const string& type, Creator creator) {
     CreatorRegistry& registry = Registry();
-    CHECK_EQ(registry.count(type), 0)
-        << "Solver type " << type << " already registered.";
+    if (registry.count(type) > 0) {
+      // glog is silent before calling main()
+      std::cerr << "Solver type " << type << " already registered.";
+    }
     registry[type] = creator;
   }
 
   // Get a solver using a SolverParameter.
-  static Solver<Dtype>* CreateSolver(const SolverParameter& param) {
+  static Solver* CreateSolver(const SolverParameter& param, size_t rank = 0U,
+      Solver* root_solver = NULL) {
     const string& type = param.type();
     CreatorRegistry& registry = Registry();
     CHECK_EQ(registry.count(type), 1) << "Unknown solver type: " << type
         << " (known types: " << SolverTypeListString() << ")";
-    return registry[type](param);
+    Solver* solver = registry[type](param, rank, root_solver);
+    return solver;
   }
 
   static vector<string> SolverTypeList() {
@@ -108,29 +114,66 @@ class SolverRegistry {
 };
 
 
-template <typename Dtype>
 class SolverRegisterer {
  public:
   SolverRegisterer(const string& type,
-      Solver<Dtype>* (*creator)(const SolverParameter&)) {
-    // LOG(INFO) << "Registering solver type: " << type;
-    SolverRegistry<Dtype>::AddCreator(type, creator);
+      Solver* (*creator)(const SolverParameter&, size_t, Solver*)) {
+    SolverRegistry::AddCreator(type, creator);
   }
 };
 
-
 #define REGISTER_SOLVER_CREATOR(type, creator)                                 \
-  static SolverRegisterer<float> g_creator_f_##type(#type, creator<float>);    \
-  static SolverRegisterer<double> g_creator_d_##type(#type, creator<double>)   \
+static SolverRegisterer g_creator_f_##type(#type, creator)
 
+#ifndef CPU_ONLY
 #define REGISTER_SOLVER_CLASS(type)                                            \
-  template <typename Dtype>                                                    \
-  Solver<Dtype>* Creator_##type##Solver(                                       \
-      const SolverParameter& param)                                            \
+  Solver* Creator_##type##Solver(                                              \
+      const SolverParameter& param,                                            \
+      size_t rank,                                                             \
+      Solver* root_solver)                                                     \
   {                                                                            \
-    return new type##Solver<Dtype>(param);                                     \
+    const Type tp = param.solver_data_type();                                  \
+    switch (tp) {                                                              \
+      case FLOAT:                                                              \
+        return new type##Solver<float>(param, rank, root_solver);              \
+        break;                                                                 \
+      case FLOAT16:                                                            \
+        return new type##Solver<float16>(param, rank, root_solver);            \
+        break;                                                                 \
+      case DOUBLE:                                                             \
+        return new type##Solver<double>(param, rank, root_solver);             \
+        break;                                                                 \
+      default:                                                                 \
+        LOG(FATAL) << "Solver data type " << Type_Name(tp)                     \
+                   << " is not supported";                                     \
+    }                                                                          \
+    return nullptr;                                                            \
   }                                                                            \
   REGISTER_SOLVER_CREATOR(type, Creator_##type##Solver)
+#else
+#define REGISTER_SOLVER_CLASS(type)                                            \
+  Solver* Creator_##type##Solver(                                              \
+      const SolverParameter& param,                                            \
+      size_t rank,                                                             \
+      Solver* root_solver)                                                     \
+  {                                                                            \
+    const Type tp = param.solver_data_type();                                  \
+    switch (tp) {                                                              \
+      case FLOAT:                                                              \
+        return new type##Solver<float>(param, rank, root_solver);              \
+        break;                                                                 \
+      case DOUBLE:                                                             \
+        return new type##Solver<double>(param, rank, root_solver);             \
+        break;                                                                 \
+      default:                                                                 \
+        LOG(FATAL) << "Solver data type " << Type_Name(tp)                     \
+                   << " is not supported";                                     \
+    }                                                                          \
+    return nullptr;                                                            \
+  }                                                                            \
+  REGISTER_SOLVER_CREATOR(type, Creator_##type##Solver)
+#endif
+
 
 }  // namespace caffe
 

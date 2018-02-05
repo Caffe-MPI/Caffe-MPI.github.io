@@ -81,6 +81,14 @@ function(caffe_generate_export_configs)
     list(APPEND Caffe_DEFINITIONS -DUSE_MKL)
   endif()
 
+  if(NCCL_FOUND)
+    list(APPEND Caffe_DEFINITIONS -DUSE_NCCL)
+  endif()
+
+  if(TEST_FP16)
+    list(APPEND Caffe_DEFINITIONS -DTEST_FP16=1)
+  endif()
+
   configure_file("cmake/Templates/CaffeConfig.cmake.in" "${PROJECT_BINARY_DIR}/CaffeConfig.cmake" @ONLY)
 
   # Add targets to the build-tree export set

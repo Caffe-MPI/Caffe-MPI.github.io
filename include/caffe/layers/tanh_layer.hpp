@@ -19,11 +19,11 @@ namespace caffe {
  * Note that the gradient vanishes as the values move away from 0.
  * The ReLULayer is often a better choice for this reason.
  */
-template <typename Dtype>
-class TanHLayer : public NeuronLayer<Dtype> {
+template <typename Ftype, typename Btype>
+class TanHLayer : public NeuronLayer<Ftype, Btype> {
  public:
   explicit TanHLayer(const LayerParameter& param)
-      : NeuronLayer<Dtype>(param) {}
+      : NeuronLayer<Ftype, Btype>(param) {}
 
   virtual inline const char* type() const { return "TanH"; }
 
@@ -38,10 +38,10 @@ class TanHLayer : public NeuronLayer<Dtype> {
    *        y = \frac{\exp(2x) - 1}{\exp(2x) + 1}
    *      @f$
    */
-  virtual void Forward_cpu(const vector<Blob<Dtype>*>& bottom,
-      const vector<Blob<Dtype>*>& top);
-  virtual void Forward_gpu(const vector<Blob<Dtype>*>& bottom,
-      const vector<Blob<Dtype>*>& top);
+  virtual void Forward_cpu(const vector<Blob*>& bottom,
+      const vector<Blob*>& top);
+  virtual void Forward_gpu(const vector<Blob*>& bottom,
+      const vector<Blob*>& top);
 
   /**
    * @brief Computes the error gradient w.r.t. the sigmoid inputs.
@@ -62,10 +62,10 @@ class TanHLayer : public NeuronLayer<Dtype> {
    *            = \frac{\partial E}{\partial y} (1 - y^2)
    *      @f$ if propagate_down[0]
    */
-  virtual void Backward_cpu(const vector<Blob<Dtype>*>& top,
-      const vector<bool>& propagate_down, const vector<Blob<Dtype>*>& bottom);
-  virtual void Backward_gpu(const vector<Blob<Dtype>*>& top,
-      const vector<bool>& propagate_down, const vector<Blob<Dtype>*>& bottom);
+  virtual void Backward_cpu(const vector<Blob*>& top,
+      const vector<bool>& propagate_down, const vector<Blob*>& bottom);
+  virtual void Backward_gpu(const vector<Blob*>& top,
+      const vector<bool>& propagate_down, const vector<Blob*>& bottom);
 };
 
 }  // namespace caffe

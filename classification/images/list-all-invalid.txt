@@ -1,0 +1,5 @@
+/toto/a.jpg
+/toto/c.jpg
+/toto/d.jpg
+http://toto.com
+/toto/a.jpg

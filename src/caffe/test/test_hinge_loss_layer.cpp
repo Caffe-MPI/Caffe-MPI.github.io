@@ -19,9 +19,9 @@ class HingeLossLayerTest : public MultiDeviceTest<TypeParam> {
 
  protected:
   HingeLossLayerTest()
-      : blob_bottom_data_(new Blob<Dtype>(10, 5, 1, 1)),
-        blob_bottom_label_(new Blob<Dtype>(10, 1, 1, 1)),
-        blob_top_loss_(new Blob<Dtype>()) {
+      : blob_bottom_data_(new TBlob<Dtype>(10, 5, 1, 1)),
+        blob_bottom_label_(new TBlob<Dtype>(10, 1, 1, 1)),
+        blob_top_loss_(new TBlob<Dtype>()) {
     // fill the values
     Caffe::set_random_seed(1701);
     FillerParameter filler_param;
@@ -40,11 +40,11 @@ class HingeLossLayerTest : public MultiDeviceTest<TypeParam> {
     delete blob_bottom_label_;
     delete blob_top_loss_;
   }
-  Blob<Dtype>* const blob_bottom_data_;
-  Blob<Dtype>* const blob_bottom_label_;
-  Blob<Dtype>* const blob_top_loss_;
-  vector<Blob<Dtype>*> blob_bottom_vec_;
-  vector<Blob<Dtype>*> blob_top_vec_;
+  TBlob<Dtype>* const blob_bottom_data_;
+  TBlob<Dtype>* const blob_bottom_label_;
+  TBlob<Dtype>* const blob_top_loss_;
+  vector<Blob*> blob_bottom_vec_;
+  vector<Blob*> blob_top_vec_;
 };
 
 TYPED_TEST_CASE(HingeLossLayerTest, TestDtypesAndDevices);
@@ -53,8 +53,9 @@ TYPED_TEST_CASE(HingeLossLayerTest, TestDtypesAndDevices);
 TYPED_TEST(HingeLossLayerTest, TestGradientL1) {
   typedef typename TypeParam::Dtype Dtype;
   LayerParameter layer_param;
-  HingeLossLayer<Dtype> layer(layer_param);
-  GradientChecker<Dtype> checker(1e-2, 2e-3, 1701, 1, 0.01);
+  HingeLossLayer<Dtype, Dtype> layer(layer_param);
+  GradientChecker<Dtype> checker(tol<Dtype>(3e-2, 1e-1),
+      tol<Dtype>(2e-3, 5e-2), 1701, 1, 0.01);
   checker.CheckGradientExhaustive(&layer, this->blob_bottom_vec_,
       this->blob_top_vec_, 0);
 }
@@ -65,8 +66,9 @@ TYPED_TEST(HingeLossLayerTest, TestGradientL2) {
   // Set norm to L2
   HingeLossParameter* hinge_loss_param = layer_param.mutable_hinge_loss_param();
   hinge_loss_param->set_norm(HingeLossParameter_Norm_L2);
-  HingeLossLayer<Dtype> layer(layer_param);
-  GradientChecker<Dtype> checker(1e-2, 1e-2, 1701);
+  HingeLossLayer<Dtype, Dtype> layer(layer_param);
+  GradientChecker<Dtype> checker(tol<Dtype>(1e-2, 5e-1),
+      tol<Dtype>(1e-2, 5e-1), 1701);
   checker.CheckGradientExhaustive(&layer, this->blob_bottom_vec_,
       this->blob_top_vec_, 0);
 }

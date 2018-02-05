@@ -18,11 +18,11 @@ class FilterLayerTest : public MultiDeviceTest<TypeParam> {
 
  protected:
   FilterLayerTest()
-      : blob_bottom_data_(new Blob<Dtype>(4, 3, 6, 4)),
-        blob_bottom_labels_(new Blob<Dtype>(4, 1, 1, 1)),
-        blob_bottom_selector_(new Blob<Dtype>(4, 1, 1, 1)),
-        blob_top_data_(new Blob<Dtype>()),
-        blob_top_labels_(new Blob<Dtype>()) {}
+      : blob_bottom_data_(new TBlob<Dtype>(4, 3, 6, 4)),
+        blob_bottom_labels_(new TBlob<Dtype>(4, 1, 1, 1)),
+        blob_bottom_selector_(new TBlob<Dtype>(4, 1, 1, 1)),
+        blob_top_data_(new TBlob<Dtype>()),
+        blob_top_labels_(new TBlob<Dtype>()) {}
   virtual void SetUp() {
     // fill the values
     Caffe::set_random_seed(1890);
@@ -52,14 +52,14 @@ class FilterLayerTest : public MultiDeviceTest<TypeParam> {
     delete blob_top_data_;
     delete blob_top_labels_;
   }
-  Blob<Dtype>* const blob_bottom_data_;
-  Blob<Dtype>* const blob_bottom_labels_;
-  Blob<Dtype>* const blob_bottom_selector_;
+  TBlob<Dtype>* const blob_bottom_data_;
+  TBlob<Dtype>* const blob_bottom_labels_;
+  TBlob<Dtype>* const blob_bottom_selector_;
   // blobs for the top of FilterLayer
-  Blob<Dtype>* const blob_top_data_;
-  Blob<Dtype>* const blob_top_labels_;
-  vector<Blob<Dtype>*> blob_bottom_vec_;
-  vector<Blob<Dtype>*> blob_top_vec_;
+  TBlob<Dtype>* const blob_top_data_;
+  TBlob<Dtype>* const blob_top_labels_;
+  vector<Blob*> blob_bottom_vec_;
+  vector<Blob*> blob_top_vec_;
 };
 
 TYPED_TEST_CASE(FilterLayerTest, TestDtypesAndDevices);
@@ -67,7 +67,7 @@ TYPED_TEST_CASE(FilterLayerTest, TestDtypesAndDevices);
 TYPED_TEST(FilterLayerTest, TestReshape) {
   typedef typename TypeParam::Dtype Dtype;
   LayerParameter layer_param;
-  FilterLayer<Dtype> layer(layer_param);
+  FilterLayer<Dtype, Dtype> layer(layer_param);
   layer.SetUp(this->blob_bottom_vec_, this->blob_top_vec_);
   layer.Reshape(this->blob_bottom_vec_, this->blob_top_vec_);
   // In the test first and last items should have been filtered
@@ -87,7 +87,7 @@ TYPED_TEST(FilterLayerTest, TestReshape) {
 TYPED_TEST(FilterLayerTest, TestForward) {
   typedef typename TypeParam::Dtype Dtype;
   LayerParameter layer_param;
-  FilterLayer<Dtype> layer(layer_param);
+  FilterLayer<Dtype, Dtype> layer(layer_param);
   layer.SetUp(this->blob_bottom_vec_, this->blob_top_vec_);
   layer.Reshape(this->blob_bottom_vec_, this->blob_top_vec_);
   layer.Forward(this->blob_bottom_vec_, this->blob_top_vec_);
@@ -115,8 +115,8 @@ TYPED_TEST(FilterLayerTest, TestForward) {
 TYPED_TEST(FilterLayerTest, TestGradient) {
   typedef typename TypeParam::Dtype Dtype;
   LayerParameter layer_param;
-  FilterLayer<Dtype> layer(layer_param);
-  GradientChecker<Dtype> checker(1e-2, 1e-3);
+  FilterLayer<Dtype, Dtype> layer(layer_param);
+  GradientChecker<Dtype> checker(tol<Dtype>(1e-2, 1e-1), tol<Dtype>(1e-3, 1e-1));
   // check only input 0 (data) because labels and selector
   // don't need backpropagation
   checker.CheckGradientExhaustive(&layer, this->blob_bottom_vec_,

@@ -1,314 +1,23 @@
 #include <cstdio>
 
-#include <algorithm>
 #include <string>
 #include <vector>
-#include <queue>
-#include <sys/time.h>
 
-#include <thread>
-#include <atomic>
-#include <condition_variable>
-#include <mutex>
-#include <chrono>
-
+#include <boost/thread.hpp>
 #include "caffe/solver.hpp"
-#include "caffe/sgd_solvers.hpp"
+#include "caffe/util/format.hpp"
+#include "caffe/util/gpu_memory.hpp"
 #include "caffe/util/hdf5.hpp"
 #include "caffe/util/io.hpp"
 #include "caffe/util/upgrade_proto.hpp"
-#include "caffe/util/mpi.hpp"
-#include "leveldb/db.h"
-#include "lmdb.h"
-#include "caffe/layers/data_layer.hpp"
-
-
-using namespace std;
-
-int currentUpdateCount=0;
-atomic_int undoneIter{0};
-mutex mutexUpdateWeight;
-condition_variable condUpdateWeight;
-condition_variable condUpdateNet;
-mutex mutexUpdateNet;
-//atomic_int mode{caffe::Caffe::mode()};
 
 namespace caffe {
 
-Caffe::Brew mode=Caffe::mode();
-
-template <typename Dtype>
-	void ReadDataFromDBandDistribute(Layer<Dtype>* layer, const int tid, const int endNum, const int childProcessSum){
-        	int startNum = 0;
-                int batchsize = layer->layer_param().data_param().batch_size();
-                int skip;
-                skip = (tid-1-tid/5)*batchsize;
- 		
-		Blob<Dtype> *prefetch_data_ = new Blob<Dtype>;
-		Blob<Dtype> *prefetch_label_ = new Blob<Dtype>;
-
-		shared_ptr<db::DB> db(db::GetDB(layer->layer_param().data_param().backend()));
-		db->Open(layer->layer_param().data_param().source(), db::READ);
-		shared_ptr<db::Cursor> cursor(db->NewCursor());
-		cursor->SeekToFirst();
-
-		bool output_label = layer->getOutputLabel();
-	
-		layer->reshapeData(*prefetch_data_, *prefetch_label_);
-		int skip1;
-                skip1 = (childProcessSum-1) * batchsize;
-		
-		for(int Num = startNum; Num < endNum; ++Num){
-			if(Num!= startNum)skip = skip1;
-			DBGPRT(LOG(INFO)<<"SKIP START "<< Num <<" " <<tid<<" "<<skip);
-#if 1
-			while (skip-- > 0) {
-				cursor->Next();
-				if(!(cursor->valid()))  cursor->SeekToFirst();
-			}
-#endif
-
-                	DBGPRT(LOG(INFO)<<"SKIP FIN READ START"<<Num<<" "<<tid); //gz cursor
-                	layer->ReadData(cursor, *prefetch_data_, *prefetch_label_);
-               	 	DBGPRT(LOG(INFO)<<"READ FIN SEND START"<<Num<<" "<<tid);
-
-#ifdef DIRECTGPU
-                	caffe_mpi_send<Dtype>(prefetch_data_->mutable_gpu_data(),prefetch_data_->count(),tid,TAG_DATA_OUT,MPI_COMM_WORLD);
-			if(output_label){
-				caffe_mpi_send<Dtype>(prefetch_label_->mutable_gpu_data(),prefetch_label_->count(),tid,TAG_DATA_OUT_IF,MPI_COMM_WORLD);
-			}
-#else
-			caffe_mpi_send<Dtype>(prefetch_data_->mutable_cpu_data(),prefetch_data_->count(),tid,TAG_DATA_OUT,MPI_COMM_WORLD);
-			if(output_label){
-				caffe_mpi_send<Dtype>(prefetch_label_->mutable_cpu_data(),prefetch_label_->count(),tid,TAG_DATA_OUT_IF,MPI_COMM_WORLD);
-			}
-#endif
-			DBGPRT(LOG(INFO)<<"SEND FIN"<<Num<<" "<<tid);
-		}
-	
-		delete prefetch_data_;
-		delete prefetch_label_;
-
-                LOG(INFO)<<"Read database thread out! Thread No."<<tid;
-	}
-
-template <typename Dtype>
-	void ComputeValueThreadServer( Solver<Dtype>* layer, const int childProcessSum) {
-	bool waitStatus;
-	while(true){
-		if(undoneIter <= 0)break;
-		{
-			waitStatus=false;
-			unique_lock<mutex> lk(mutexUpdateWeight);
-			
-#if 1
-			DBGPRT(LOG(INFO)<<"WAIT "<<currentUpdateCount);
-			waitStatus=condUpdateWeight.wait_for(lk,chrono::seconds(layer->param().timeout_sec()),[=](){return currentUpdateCount >= childProcessSum;});
-			if(waitStatus==false) LOG(INFO)<<"Timeout "<<currentUpdateCount;
-#else
-			condUpdateWeight.wait(lk,[=](){return currentUpdateCount >= childProcessSum || currentUpdateCount >= undoneIter;});//need test
-#endif
-
-			DBGPRT(LOG(INFO)<<"WAIT FIN"<<currentUpdateCount);
-			undoneIter -= currentUpdateCount;
-                        if(currentUpdateCount>0){
-				layer->ComputeValueServer();
-				DBGPRT(LOG(INFO)<<"CVS FIN"<<currentUpdateCount);
-				condUpdateNet.notify_all();
-			}
-		}
-	}
-}
-
-template <typename Dtype>
-	void Solver<Dtype>::ComputeValueServer(){
-		ComputeUpdateValue();
-		bool ifTest = ((iter_+currentUpdateCount)/param_.test_interval())  > (iter_ /param_.test_interval());
-		iter_ += currentUpdateCount;
-		if(ifTest) TestAll();
-		currentUpdateCount=0;
-	}
-        
-
-template <typename Dtype>
-	void ComputeValueThreadClient(Solver<Dtype>* solver, const int tid, const int endNum) {
-		int startNum = 0;
-                CHECK(solver);
-                for(int i=startNum; i < endNum; ++i){
-                	solver->ComputeValueClient(tid);
-                }
-                LOG(INFO)<<"Thread fin "<<tid;
-         }
-
-template <typename Dtype>
-	void Solver<Dtype>::ComputeValueClient(int tid){
-		int mpi_source,tid22;
-		tid22 = tid/4 + tid + 1;
-		ComputeUpdateValueClientThread(mpi_source,tid22,tid);
-		{
-			unique_lock<mutex> ul(mutexUpdateNet);
-			condUpdateNet.wait(ul, []{return currentUpdateCount == 0;});
-		}
-		
-		flagComputeEndNeedUpdate[tid]=0;
-		vector<shared_ptr<Blob<Dtype> > >& net_params = this->net_->params_nc();
-
-		for (int param_id = 0; param_id < net_params.size(); ++param_id) {
-                	gpu_sync();
-#ifdef DIRECTGPU
-			caffe_mpi_send<Dtype>(tempdata[tid][param_id]->mutable_gpu_data(),tempdata[tid][param_id]->count(),tid22,TAG_NET_OUT,MPI_COMM_WORLD);
-#else
-			caffe_mpi_send<Dtype>(tempdata[tid][param_id]->mutable_cpu_data(),tempdata[tid][param_id]->count(),tid22,TAG_NET_OUT,MPI_COMM_WORLD);
-#endif
-                 }
-         }
-
-
-template <typename Dtype>
-Dtype Solver<Dtype>::GetLearningRate() {
-  Dtype rate;
-  const string& lr_policy = this->param_.lr_policy();
-  if (lr_policy == "fixed") {
-    rate = this->param_.base_lr();
-  } else if (lr_policy == "step") {
-    this->current_step_ = this->iter_ / this->param_.stepsize();
-    rate = this->param_.base_lr() *
-        pow(this->param_.gamma(), this->current_step_);
-  } else if (lr_policy == "exp") {
-    rate = this->param_.base_lr() * pow(this->param_.gamma(), this->iter_);
-  } else if (lr_policy == "inv") {
-    rate = this->param_.base_lr() *
-        pow(Dtype(1) + this->param_.gamma() * this->iter_,
-            - this->param_.power());
-  } else if (lr_policy == "multistep") {
-    if (this->current_step_ < this->param_.stepvalue_size() &&
-          this->iter_ >= this->param_.stepvalue(this->current_step_)) {
-      this->current_step_++;
-      LOG(INFO) << "MultiStep Status: Iteration " <<
-      this->iter_ << ", step = " << this->current_step_;
-    }
-    rate = this->param_.base_lr() *
-        pow(this->param_.gamma(), this->current_step_);
-  } else if (lr_policy == "poly") {
-    rate = this->param_.base_lr() * pow(Dtype(1.) -
-        (Dtype(this->iter_) / Dtype(this->param_.max_iter())),
-        this->param_.power());
-  } else if (lr_policy == "sigmoid") {
-    rate = this->param_.base_lr() * (Dtype(1.) /
-        (Dtype(1.) + exp(-this->param_.gamma() * (Dtype(this->iter_) -
-          Dtype(this->param_.stepsize())))));
-  } else {
-    LOG(FATAL) << "Unknown learning rate policy: " << lr_policy;
-  }
-  return rate;
-}
-
-template <typename Dtype>
-	void Solver<Dtype>::ComputeUpdateValue() {
-		vector<shared_ptr<Blob<Dtype> > >& net_params = this->net_->params_nc();
-		const vector<float>& net_params_lr = this->net_->params_lr();
-		const vector<float>& net_params_weight_decay = this->net_->params_weight_decay();
-		Dtype rate = GetLearningRate();
-		Dtype momentum = this->param_.momentum();
-		Dtype weight_decay = this->param_.weight_decay();
-		string regularization_type = this->param_.regularization_type();
-  		Caffe::set_mode(Caffe::GPU); //without this, there will be a sigsegv
-
-		switch (Caffe::mode()) {
-		case Caffe::CPU:
-			for(int param_id = 0; param_id < net_params.size(); ++param_id){
-				memset(net_params[param_id]->mutable_cpu_diff(),0,sizeof(Dtype)*(net_params[param_id]->count()));
-			}
-			for(int i=0;i<this->childProcessSum;++i){
-				if(this->flagComputeEndNeedUpdate[i]==1){
-					for(int param_id = 0; param_id < net_params.size(); ++param_id){
-						caffe_axpy(net_params[param_id]->count(),(Dtype)1,this->tempdata[i][param_id]->mutable_cpu_data(),net_params[param_id]->mutable_cpu_diff());
-					}
-				}
-			}
-			
-			for (int param_id = 0; param_id < net_params.size(); ++param_id) {
-				caffe_scal(net_params[param_id]->count(),(Dtype)(1.0/currentUpdateCount),net_params[param_id]->mutable_cpu_diff());
-				// Compute the value to history, and then copy them to the blob's diff.
-				Dtype local_rate = rate * net_params_lr[param_id];
-				Dtype local_decay = weight_decay * net_params_weight_decay[param_id];
-				if (local_decay) {
-					if (regularization_type == "L2") {
-						caffe_axpy(net_params[param_id]->count(),local_decay,net_params[param_id]->cpu_data(),net_params[param_id]->mutable_cpu_diff());
-				} else if (regularization_type == "L1") {
-						caffe_cpu_sign(net_params[param_id]->count(),net_params[param_id]->cpu_data(),temp_[param_id]->mutable_cpu_data());
-						caffe_axpy(net_params[param_id]->count(),local_decay,temp_[param_id]->cpu_data(),net_params[param_id]->mutable_cpu_diff());
-				} else {
-	                                        LOG(FATAL) << "Unknown regularization type: " << regularization_type;
-                                       }
-				}
-	caffe_cpu_axpby(net_params[param_id]->count(), local_rate,net_params[param_id]->cpu_diff(), momentum,history_[param_id]->mutable_cpu_data());
-	caffe_copy(net_params[param_id]->count(),history_[param_id]->cpu_data(), net_params[param_id]->mutable_cpu_diff());
-		}
-		break;
-
-		 case Caffe::GPU:
-#ifndef CPU_ONLY
-		for(int param_id = 0; param_id < net_params.size(); ++param_id){
-			cudaMemset(net_params[param_id]->mutable_gpu_diff(),0,sizeof(Dtype)*(net_params[param_id]->count()));}
-
-		for(int i=0;i<this->childProcessSum;++i){
-			if(this->flagComputeEndNeedUpdate[i]==1){
-				for(int param_id = 0; param_id < net_params.size(); ++param_id){
-			caffe_gpu_axpy(net_params[param_id]->count(),(Dtype)1,this->tempdata[i][param_id]->mutable_gpu_data(),net_params[param_id]->mutable_gpu_diff());
-
-					}
-				}
-			}
-
-		for (int param_id = 0; param_id < net_params.size(); ++param_id) {
-			caffe_gpu_scal(net_params[param_id]->count(),(Dtype)(1.0/currentUpdateCount),net_params[param_id]->mutable_gpu_diff());
-			 Dtype local_rate = rate * net_params_lr[param_id];
-			Dtype local_decay = weight_decay * net_params_weight_decay[param_id];
-			if (local_decay) {
-				if (regularization_type == "L2") {
-				caffe_gpu_axpy(net_params[param_id]->count(),local_decay,net_params[param_id]->gpu_data(),net_params[param_id]->mutable_gpu_diff());
-			} else if (regularization_type == "L1") {
-				caffe_gpu_sign(net_params[param_id]->count(),net_params[param_id]->gpu_data(),temp_[param_id]->mutable_gpu_data());
-				 caffe_gpu_axpy(net_params[param_id]->count(),local_decay,temp_[param_id]->gpu_data(),net_params[param_id]->mutable_gpu_diff());
-			 } else {
-				LOG(FATAL) << "Unknown regularization type: " << regularization_type;
-			}
-		}
-		
-		caffe_gpu_axpby(net_params[param_id]->count(), local_rate,net_params[param_id]->gpu_diff(), momentum,history_[param_id]->mutable_gpu_data());
-		caffe_copy(net_params[param_id]->count(),history_[param_id]->gpu_data(),net_params[param_id]->mutable_gpu_diff());
-		}
-#else
-		NO_GPU;
-#endif
-		break;
-		
-	        default:
-                                        LOG(FATAL) << "Unknown caffe mode: " << Caffe::mode();
-                        }
-
-		this->net_->Update();
-                                for(int i=0;i<this->childProcessSum;++i){
-                                if(this->flagComputeEndNeedUpdate[i]==1){
-                                        for (int param_id = 0; param_id < net_params.size(); ++param_id) {
-
-			caffe_copy(net_params[param_id]->count(),net_params[param_id]->gpu_data(),this->tempdata[i][param_id]->mutable_gpu_data());
-				}
-			}
-
-		}
-	}
-
-
-
-template<typename Dtype>
-void Solver<Dtype>::SetActionFunction(ActionCallback func) {
+void Solver::SetActionFunction(ActionCallback func) {
   action_request_function_ = func;
 }
 
-template<typename Dtype>
-SolverAction::Enum Solver<Dtype>::GetRequestedAction() {
+SolverAction::Enum Solver::GetRequestedAction() {
   if (action_request_function_) {
     // If the external request function has been set, call it.
     return action_request_function_();
@@ -316,65 +25,41 @@ SolverAction::Enum Solver<Dtype>::GetRequestedAction() {
   return SolverAction::NONE;
 }
 
-template <typename Dtype>
-Solver<Dtype>::Solver(const SolverParameter& param, const Solver* root_solver)
-    : net_(), callbacks_(), root_solver_(root_solver),
-      requested_early_exit_(false) {
-  Init(param);
+Solver::Solver(const SolverParameter& param, size_t rank, const Solver* root_solver)
+    : param_(param), data_type_(param_.solver_data_type()), iter_(0), id_(0), net_(),
+      callback_(nullptr), root_solver_(root_solver), rank_(rank), requested_early_exit_(false),
+      iteration_timer_(), test_timer_(), iterations_last_(0), iterations_restored_(0),
+      iter_size_complete_(false) {
+  Init();
 }
 
-template <typename Dtype>
-Solver<Dtype>::Solver(const string& param_file, const Solver* root_solver)
-    : net_(), callbacks_(), root_solver_(root_solver),
-      requested_early_exit_(false) {
-  SolverParameter param;
-  ReadSolverParamsFromTextFileOrDie(param_file, &param);
-  Init(param);
-}
+Solver::Solver(const string& param_file, size_t rank, const Solver* root_solver)
+    : Solver(ReadSolverParamsFromTextFileOrDie(param_file), rank, root_solver) {}
 
-template <typename Dtype>
-void Solver<Dtype>::Init(const SolverParameter& param) {
+Solver::~Solver() {}
+
+void Solver::Init() {
+  LOG(INFO) << "Solver data type: " << Type_Name(data_type_);
   CHECK(Caffe::root_solver() || root_solver_)
       << "root_solver_ needs to be set for all non-root solvers";
   LOG_IF(INFO, Caffe::root_solver()) << "Initializing solver from parameters: "
-    << std::endl << param.DebugString();
-  param_ = param;
+    << std::endl << param_.DebugString();
+
   CHECK_GE(param_.average_loss(), 1) << "average_loss should be non-negative.";
   CheckSnapshotWritePermissions();
-  if (Caffe::root_solver() && param_.random_seed() >= 0) {
-    Caffe::set_random_seed(param_.random_seed());
+  if (Caffe::root_solver()) {  // P2PSync does other solvers if they exist
+    Caffe::set_root_seed(static_cast<uint64_t>(param_.random_seed()));
   }
   // Scaffolding code
-  int size;
-  MPI_Comm_rank (MPI_COMM_WORLD, &rank);
-  MPI_Comm_size (MPI_COMM_WORLD, &size);
-
   InitTrainNet();
-  // Set the correct NetState.  We start with the solver defaults (lowest
-  if (Caffe::root_solver()) {
-    InitTestNets();
-    LOG(INFO) << "Solver scaffolding done.";
-  }
+  InitTestNets();
+  LOG(INFO) << "Solver scaffolding done.";
   iter_ = 0;
+  total_lapse_ = 0.F;
   current_step_ = 0;
 }
 
-template <typename Dtype>
-                void Solver<Dtype>::ComputeUpdateValueClientThread(int& mpi_source,int tid22,int tid){
-                        GetValue(mpi_source,tid22,tid);
-                }
-       template <typename Dtype>
-                void Solver<Dtype>::ComputeUpdateValueClient() {
-                        Dtype rate = GetLearningRate();
-                        if (this->param_.display() && this->iter_ % this->param_.display() == 0) {
-                                LOG(INFO) << "Iteration " << this->iter_ << ", lr = " << rate;
-                        }
-                }
-
-
-
-template <typename Dtype>
-void Solver<Dtype>::InitTrainNet() {
+void Solver::InitTrainNet() {
   const int num_train_nets = param_.has_net() + param_.has_net_param() +
       param_.has_train_net() + param_.has_train_net_param();
   const string& field_names = "net, net_param, train_net, train_net_param";
@@ -412,16 +97,14 @@ void Solver<Dtype>::InitTrainNet() {
   net_state.MergeFrom(param_.train_state());
   net_param.mutable_state()->CopyFrom(net_state);
   if (Caffe::root_solver()) {
-    net_.reset(new Net<Dtype>(net_param));
+    net_.reset(new Net(net_param, rank_, &init_flag_, &iter0_flag_));
   } else {
-    net_.reset(new Net<Dtype>(net_param, root_solver_->net_.get()));
+    net_.reset(new Net(net_param, rank_, &init_flag_, &iter0_flag_,
+        root_solver_->net_.get()));
   }
-  // Set the correct NetState.  We start with the solver defaults (lowest
 }
 
-template <typename Dtype>
-void Solver<Dtype>::InitTestNets() {
-  CHECK(Caffe::root_solver());
+void Solver::InitTestNets() {
   const bool has_net_param = param_.has_net_param();
   const bool has_net_file = param_.has_net();
   const int num_generic_nets = has_net_param + has_net_file;
@@ -492,83 +175,166 @@ void Solver<Dtype>::InitTestNets() {
     LOG(INFO)
         << "Creating test net (#" << i << ") specified by " << sources[i];
     if (Caffe::root_solver()) {
-      test_nets_[i].reset(new Net<Dtype>(net_params[i]));
+      test_nets_[i].reset(new Net(net_params[i], rank_, &init_flag_, &iter0_flag_));
     } else {
-      test_nets_[i].reset(new Net<Dtype>(net_params[i],
+      test_nets_[i].reset(new Net(net_params[i], rank_, &init_flag_, &iter0_flag_,
           root_solver_->test_nets_[i].get()));
     }
     test_nets_[i]->set_debug_info(param_.debug_info());
   }
 }
 
-template <typename Dtype>
-void Solver<Dtype>::Step(int iters) {
+void Solver::Step(int iters) {
   const int start_iter = iter_;
   const int stop_iter = iter_ + iters;
   int average_loss = this->param_.average_loss();
   losses_.clear();
   smoothed_loss_ = 0;
+  const Caffe::Brew mode = Caffe::mode();
+  const int solver_count = Caffe::solver_count();
+  const bool root_solver = this->is_root();
+
+  net_->set_solver(this);
+
+#ifndef CPU_ONLY
+  for (const shared_ptr<Blob>& param : net_->learnable_params()) {
+    // To prevent allocations inside on_start call:
+    param->allocate_data(mode == Caffe::GPU);
+  }
+
+  net_->InitializeLearnableDiffSpace();
+
+  if (solver_count > 1) {
+    // we need to sync all threads before starting, otherwise some cuda init,
+    // malloc or other cuda stuff could interlock with in-loop cuda GPU sync
+    // called in on_start.
+    callback_soft_barrier();
+    {
+      unique_ptr<unique_lock<shared_mutex>> lock;
+      if (root_solver) {
+        lock.reset(new unique_lock<shared_mutex>(GPUMemory::read_write_mutex()));
+      }
+      callback_soft_barrier();
+      callback_->on_start(net_->learnable_params());
+    }
+    callback_soft_barrier();
+    LOG(INFO) << "Starting Optimization on GPU " << Caffe::current_device();
+  }
+  const bool use_multi_gpu_testing = Caffe::solver_count() > 1;
+  const string mgpu_str = use_multi_gpu_testing ? "[MultiGPU] " : "";
+#else
+  const bool use_multi_gpu_testing = false;
+  const string mgpu_str;
+#endif
+
+  uint64_t random_seed = param_.random_seed() >= 0 ?
+      static_cast<uint64_t>(param_.random_seed()) : Caffe::next_seed();
+
+  reduce_thread_.reset(new boost::thread(&Solver::Reduce, this,
+      Caffe::current_device(), mode, random_seed, solver_count, root_solver));
 
   while (iter_ < stop_iter) {
-    // zero-init the params
-    net_->ClearParamDiffs();
-    if (param_.test_interval() && iter_ % param_.test_interval() == 0
-        && (iter_ > 0 || param_.test_initialization())
-        && Caffe::root_solver()) {
-      TestAll();
-      if (requested_early_exit_) {
-        // Break out of the while loop because stop was requested while testing.
+    if (param_.snapshot_diff()) {
+      net_->ClearParamDiffs();
+    }  // we clean them in ApplyUpdate otherwise
+
+    // Just started or restored?
+    const bool first_loop = iter_ == 0 || iterations_last_ < 0;
+    if (iter_ == 0) {
+      if (TestAll(1, use_multi_gpu_testing)) {
         break;
       }
+      callback_soft_barrier();
+      LOG_IF(INFO, Caffe::root_solver()) << mgpu_str << "Initial Test completed";
+    } else if (param_.test_interval()
+        && iter_ % param_.test_interval() == 0
+        && iterations_last_ >= 0) {
+      test_timer_.Start();
+      if (TestAll(0, use_multi_gpu_testing)) {
+        break;
+      }
+      callback_soft_barrier();
+      float lapse = test_timer_.Seconds();
+      LOG_IF(INFO, Caffe::root_solver()) << mgpu_str << "Tests completed in "
+                                         << lapse << "s";
+    }
+    if (requested_early_exit_) {
+      // Break out of the while loop because stop was requested while testing.
+      break;
     }
 
-    for (int i = 0; i < callbacks_.size(); ++i) {
-      callbacks_[i]->on_start();
-    }
-    const bool display = param_.display() && iter_ % param_.display() == 0;
+    const bool display = this->display();
     net_->set_debug_info(display && param_.debug_info());
     // accumulate the loss and gradient
-    Dtype loss = 0;
+    float loss = 0.F;
+    if (first_loop) {
+      iterations_last_ = iter_;
+      iteration_timer_.Start();
+      init_flag_.set();
+    }
+
+    iteration_start_signal();
     for (int i = 0; i < param_.iter_size(); ++i) {
-      loss += net_->ForwardBackward();
+      loss += net_->ForwardBackward(i + 1 == param_.iter_size());
+
+      if (i == 0) {
+        if (first_loop) {
+          iter0_flag_.set();
+          net_->wait_layers_init();
+        }
+        iter_size_complete_ = true;
+      }
     }
     loss /= param_.iter_size();
+    iteration_wait();
+    if (requested_early_exit_) {
+      total_lapse_ += iteration_timer_.Seconds();
+      break;
+    }
+
     // average the loss across iterations for smoothed reporting
     UpdateSmoothedLoss(loss, start_iter, average_loss);
-    if (display) {
-      LOG_IF(INFO, Caffe::root_solver()) << "Iteration " << iter_
-          << ", loss = " << smoothed_loss_;
-      const vector<Blob<Dtype>*>& result = net_->output_blobs();
+    if (display || iter_ <= 2 || iter_ + 1 >= stop_iter) {
+      float lapse = iteration_timer_.Seconds();
+      if (iter_ >= 2) {  // we skip 0th and 1st for correct benchmarking
+        total_lapse_ += lapse;
+        float per_s = (iter_ - iterations_last_) / (lapse > 0.F ? lapse : 1.F);
+        LOG_IF(INFO, Caffe::root_solver()) << "Iteration " << iter_
+                                           << " (" << per_s << " iter/s, " << lapse << "s/"
+                                           << param_.display() << " iter), loss = "
+                                           << smoothed_loss_;
+      } else {
+        LOG_IF(INFO, Caffe::root_solver()) << "Iteration " << iter_
+                                           << " (" << lapse << " s), loss = " << smoothed_loss_;
+      }
+      const vector<Blob*>& result = net_->output_blobs();
       int score_index = 0;
       for (int j = 0; j < result.size(); ++j) {
-        const Dtype* result_vec = result[j]->cpu_data();
+        const float* result_vec = result[j]->cpu_data<float>();
         const string& output_name =
             net_->blob_names()[net_->output_blob_indices()[j]];
-        const Dtype loss_weight =
+        const float loss_weight =
             net_->blob_loss_weights()[net_->output_blob_indices()[j]];
         for (int k = 0; k < result[j]->count(); ++k) {
           ostringstream loss_msg_stream;
           if (loss_weight) {
             loss_msg_stream << " (* " << loss_weight
-                            << " = " << loss_weight * result_vec[k] << " loss)";
+                << " = " << (loss_weight * result_vec[k]) << " loss)";
           }
           LOG_IF(INFO, Caffe::root_solver()) << "    Train net output #"
               << score_index++ << ": " << output_name << " = "
               << result_vec[k] << loss_msg_stream.str();
         }
       }
+      PrintRate();
+      iterations_last_ = iter_;
+      iteration_timer_.Start();
     }
-    for (int i = 0; i < callbacks_.size(); ++i) {
-      callbacks_[i]->on_gradients_ready();
-    }
-    ApplyUpdate();
-
     // Increment the internal iter_ counter -- its value should always indicate
     // the number of times the weights have been updated.
     ++iter_;
 
     SolverAction::Enum request = GetRequestedAction();
-
     // Save a snapshot if needed.
     if ((param_.snapshot()
          && iter_ % param_.snapshot() == 0
@@ -578,224 +344,122 @@ void Solver<Dtype>::Step(int iters) {
     }
     if (SolverAction::STOP == request) {
       requested_early_exit_ = true;
+      total_lapse_ += iteration_timer_.Seconds();
       // Break out of training loop.
       break;
     }
   }
+  Finalize();
 }
 
-template <typename Dtype>
-void Solver<Dtype>::Solve(const char* resume_file) {
-  CHECK(Caffe::root_solver());
+void Solver::Finalize() {
+  if (reduce_thread_) {
+    net_->Finalize();
+    reduce_thread_->join();
+  }
+}
+
+void Solver::Reduce(int device, Caffe::Brew mode, uint64_t random_seed,
+    int solver_count, bool root_solver) {
+  Caffe::set_mode(mode);
+#ifndef CPU_ONLY
+  if (Caffe::mode() == Caffe::GPU) {
+    CUDA_CHECK(cudaSetDevice(device));
+#ifndef NO_NVML
+    nvml::setCpuAffinity(rank_);
+#endif
+  }
+#endif
+  Caffe::set_random_seed(random_seed);
+  Caffe::set_solver_count(solver_count);
+  Caffe::set_root_solver(root_solver);
+  net_->ReduceAndUpdate();
+}
+
+bool Solver::Solve(const char* resume_file) {
   LOG(INFO) << "Solving " << net_->name();
   LOG(INFO) << "Learning Rate Policy: " << param_.lr_policy();
-  vector<shared_ptr<Blob<Dtype> > >& net_params = this->net_->params_nc();
-if(rank == 0){
-                          history_.clear();
-                        update_.clear();
-                        temp_.clear();
-                        for (int i = 0; i < net_params.size(); ++i) {
-                                const Blob<Dtype>* net_param = net_params[i].get();
-                                history_.push_back(shared_ptr<Blob<Dtype> >(new Blob<Dtype>(net_param->num(), net_param->channels(), net_param->height(),net_param->width())));
-				update_.push_back(shared_ptr<Blob<Dtype> >(new Blob<Dtype>(net_param->num(), net_param->channels(), net_param->height(),net_param->width())));
-				temp_.push_back(shared_ptr<Blob<Dtype> >(new Blob<Dtype>(net_param->num(), net_param->channels(), net_param->height(),net_param->width())));
-}
-
-}
-
-
   // Initialize to false every time we start solving.
   requested_early_exit_ = false;
 
-iter_ = 0;
-  if (resume_file) {
+  if (resume_file != nullptr) {
     LOG(INFO) << "Restoring previous solver status from " << resume_file;
     Restore(resume_file);
   }
-
-int msize;
-        MPI_Comm_size (MPI_COMM_WORLD, &msize);
-childProcessSum = msize-1-(msize-1)/5;
-        undoneIter = param_.max_iter() - iter_;
-if(rank==0){
-  LOG(INFO) << "Learning Rate Policy: "  ;
-          flagComputeEndNeedUpdate=new int[childProcessSum]();
-          tempdata= new Bloblite<Dtype> **[childProcessSum];
-          for(int i=0;i<childProcessSum;++i){
-                tempdata[i]=new Bloblite<Dtype>* [net_params.size()];
-                for(int j=0;j<net_params.size();++j){
-                        tempdata[i][j]= new Bloblite<Dtype>(net_params[j]->count());
-                }
-          }
+  callback_soft_barrier();
+  if (Caffe::restored_iter() != -1) {
+    iter_ = Caffe::restored_iter();
+    iterations_restored_ = iter_;  // for correct benchmarking
+    iterations_last_ = -1;
   }
- MPI_Barrier(MPI_COMM_WORLD);
-//if(rank==0) Step(param_.max_iter() - iter_);
 
-if(rank==0){
-    int itSize = param_.max_iter() / childProcessSum;
-    int tailSize = param_.max_iter() % childProcessSum;
-    std::thread threadServer(&ComputeValueThreadServer<Dtype>,this,childProcessSum);
-    vector<thread> threadClientUpdate(childProcessSum);
-    int sizeRel = 4<childProcessSum ? 4:childProcessSum;
-    for(int i=0;i<childProcessSum;++i){
-                threadClientUpdate[i] = std::thread(&ComputeValueThreadClient<Dtype>,this,i,(i<tailSize ? itSize +1:itSize));
-         }
-
-    vector<thread> threadRead(sizeRel);
-
-
-for(int i=0;i< sizeRel;++i){
-        threadRead[i] = std::thread(&ReadDataFromDBandDistribute<Dtype>,net_->layers().at(0).get(),
-                                   i+1,(i<tailSize ? itSize +1:itSize),childProcessSum);
+  // For a network that is trained by the solver, no bottom or top vecs
+  // should be given, and we will just provide dummy vecs.
+  int start_iter = iter_;
+  Step(param_.max_iter() - iter_);
+  // If we haven't already, save a snapshot after optimization, unless
+  // overridden by setting snapshot_after_train := false
+  if (param_.snapshot_after_train()
+      && (!param_.snapshot() || iter_ % param_.snapshot() != 0)) {
+    if (Caffe::root_solver()) {
+      Snapshot();
     }
-    for(int i=0;i<sizeRel;++i){
-      threadRead[i].join();
-    }
-    for(int i=0;i<childProcessSum;++i)
-      threadClientUpdate[i].join();
-    threadServer.join();
-    threadClientUpdate.clear();
-    threadRead.clear();
- }
-else if(rank%5==0)
-{
-    int itSize = param_.max_iter() / childProcessSum;
-    int tailSize = param_.max_iter() % childProcessSum;
-    int sizeMax = (rank/5+1)*4;
-    int sizeRel = sizeMax<childProcessSum ? 4:childProcessSum+4-sizeMax;
-  vector<thread> threadRead(sizeRel);
-   for(int i=0;i< sizeRel;++i){
-        threadRead[i] = std::thread(&ReadDataFromDBandDistribute<Dtype>,net_->layers().at(0).get(),
-                                   i+rank+1,(i<tailSize ? itSize +1:itSize),childProcessSum);
-    }
-    for(int i=0;i<sizeRel;++i){
-      threadRead[i].join();
-    }
+  }
+  Caffe::set_restored_iter(-1);
+  iterations_restored_ = 0;
+  iterations_last_ = 0;
+  if (requested_early_exit_) {
+    LOG(INFO) << "Optimization stopped early.";
+    return true;
+  }
+  // After the optimization is done, run an additional train and test pass to
+  // display the train and test loss/outputs if appropriate (based on the
+  // display and test_interval settings, respectively).  Unlike in the rest of
+  // training, for the train net we only run a forward pass as we've already
+  // updated the parameters "max_iter" times -- this final pass is only done to
+  // display the loss, which is computed in the forward pass.
+  if (this->display()) {
+    int average_loss = this->param_.average_loss();
+    float loss;
+    net_->Forward(&loss);
 
-}
-else{// slave processes
-        int iterSize;
-        iterSize = param_.max_iter() / childProcessSum;
-        int tailtSize;
-        tailtSize = param_.max_iter() % childProcessSum;
-        int startNum,endNum;
-        startNum = 0;
-        endNum = iterSize;
-        if(tailtSize >= rank) ++endNum;
-for(int i=startNum; i< endNum; ++i){
-                MPI_Status status;
-                status.MPI_ERROR=0;
-iter_ = (rank - rank/5 - 1) + i * childProcessSum;
-//net_->taskiter = iter_;
-                DBGPRT(LOG(INFO)<<"FB START "<<i<<" "<<iter_);
-net_->ClearParamDiffs();
-Dtype loss = net_->ForwardBackward();
-DBGPRT(LOG(INFO)<<"FB FIN CUVC START "<<i<<" "<<iter_);
-ComputeUpdateValueClient();
-DBGPRT(LOG(INFO)<<"CUVC FIN RECV NET START "<<i<<" "<<iter_);
-                vector<shared_ptr<Blob<Dtype> > >& net_params = this->net_->params_nc();
+    UpdateSmoothedLoss(loss, start_iter, average_loss);
 
-#ifdef DIRECTGPU
-   for (int param_id = 0; param_id < net_params.size(); ++param_id) {
-             caffe_mpi_recv<Dtype>(net_params[param_id]->mutable_gpu_data(),net_params[param_id]->count(),0,TAG_NET_OUT,MPI_COMM_WORLD,&status);
-         }
-#else
-     for (int param_id = 0; param_id < net_params.size(); ++param_id) {
-             caffe_mpi_recv<Dtype>(net_params[param_id]->mutable_cpu_data(),net_params[param_id]->count(),0,TAG_NET_OUT,MPI_COMM_WORLD,&status);
-        }
-#endif
-
-  DBGPRT(LOG(INFO)<<"RECV NET FIN "<<i<<" "<<iter_);
-if (param_.snapshot() && iter_ > startNum &&
-                                                        iter_ % param_.snapshot() == 0) {
-                                                Snapshot();
-                                        }
-                                        const bool display = param_.display() && iter_ % param_.display() == 0;
-                                        net_->set_debug_info(display && param_.debug_info());
-                                        if (display) {
-                                                LOG(INFO) << "Iteration " << iter_ << ", loss = " << loss;
-                                                const vector<Blob<Dtype>*>& result = net_->output_blobs();
-                                                int score_index = 0;
-                                                for (int j = 0; j < result.size(); ++j) {
-                                                        const Dtype* result_vec = result[j]->cpu_data();
-                                                        const string& output_name =
-                                                                net_->blob_names()[net_->output_blob_indices()[j]];
-                                                        const Dtype loss_weight =
-                                                                net_->blob_loss_weights()[net_->output_blob_indices()[j]];
-                                                        for (int k = 0; k < result[j]->count(); ++k) {
-                                                                ostringstream loss_msg_stream;
-                                                                if (loss_weight) {
-                                                                        loss_msg_stream << " (* " << loss_weight
-                                                                                << " = " << loss_weight * result_vec[k] << " loss)";
-                                                                }
-LOG(INFO) << "    Train net output #"
-                                                                        << score_index++ << ": " << output_name << " = "
-                                                                        << result_vec[k] << loss_msg_stream.str();
-                                                        }
-                                                }
-                                        }
-                                }
-
-
+    LOG_IF(INFO, Caffe::root_solver()) << "Iteration "
+        << iter_ << ", loss = " << smoothed_loss_;
+  }
+  if (param_.test_interval() && iter_ % param_.test_interval() == 0) {
+    bool use_multi_gpu_testing = Caffe::solver_count() > 1;
+    TestAll(0, use_multi_gpu_testing);
+    callback_soft_barrier();
+  }
+  return false;
 }
 
- MPI_Barrier(MPI_COMM_WORLD);
-  if(rank==0){
-
-        if (param_.snapshot_after_train()
-          && (!param_.snapshot() || iter_ % param_.snapshot() != 0)) {
-        Snapshot();
-        }
-        if (requested_early_exit_) {
-        LOG(INFO) << "Optimization stopped early.";
-        return;
-        }
-        // After the optimization is done, run an additional train and test pass to
-        //         // display the train and test loss/outputs if appropriate (based on the
-        //                 // display and test_interval settings, respectively).  Unlike in the rest of
-        //                         // training, for the train net we only run a forward pass as we've already
-        //                                 // updated the parameters "max_iter" times -- this final pass is only done to
-        //                                         // display the loss, which is computed in the forward pass.
-        vector<Blob<Dtype>*> bottom_vec;
-        if (param_.display() && iter_ % param_.display() == 0) {
-                       Dtype loss;
-              // net_->taskiter = 0;
-               net_->ForwardTest(bottom_vec, &loss);
-               LOG(INFO) << "Iteration " << iter_ << ", loss = " << loss;
-        }
-        if (param_.test_interval() && iter_ % param_.test_interval() == 0) {
-                                         TestAll();
-		}	
-if (param_.test_interval() && iter_ % param_.test_interval() == 0) {
-        TestAll();
-        }
-        LOG(INFO) << "Optimization Done.";
-        }
-
-}
-
-template <typename Dtype>
-void Solver<Dtype>::TestAll() {
+bool Solver::TestAll(const int iters, bool use_multi_gpu) {
   for (int test_net_id = 0;
        test_net_id < test_nets_.size() && !requested_early_exit_;
        ++test_net_id) {
-    Test(test_net_id);
+    if (Test(test_net_id, iters, use_multi_gpu)) {
+      return true;
+    }
   }
+  return false;
 }
 
-template <typename Dtype>
-void Solver<Dtype>::Test(const int test_net_id) {
-  CHECK(Caffe::root_solver());
-  LOG(INFO) << "Iteration " << iter_
+bool Solver::Test(const int test_net_id, const int iters, bool use_multi_gpu) {
+  LOG_IF(INFO, Caffe::root_solver()) << "Iteration " << iter_
             << ", Testing net (#" << test_net_id << ")";
-  CHECK_NOTNULL(test_nets_[test_net_id].get())->
-      ShareTrainedLayersWith(net_.get());
-  vector<Dtype> test_score;
+  if (!test_nets_[test_net_id]->trained_layers_shared()) {
+    CHECK_NOTNULL(test_nets_[test_net_id].get())->ShareTrainedLayersWith(net_.get());
+  }
+  vector<float> test_score;
   vector<int> test_score_output_id;
-vector<Blob<Dtype>*> bottom_vec;
-  const shared_ptr<Net<Dtype> >& test_net = test_nets_[test_net_id];
-  Dtype loss = 0;
-  for (int i = 0; i < param_.test_iter(test_net_id); ++i) {
+  const shared_ptr<Net>& test_net = test_nets_[test_net_id];
+  test_net->set_solver(this);
+  float loss = 0.F;
+  const int test_iterations = iters > 0 ? iters : param_.test_iter(test_net_id);
+  for (int i = 0; i < test_iterations; ++i) {
     SolverAction::Enum request = GetRequestedAction();
     // Check to see if stoppage of testing/training has been requested.
     while (request != SolverAction::NONE) {
@@ -807,37 +471,53 @@ vector<Blob<Dtype>*> bottom_vec;
         request = GetRequestedAction();
     }
     if (requested_early_exit_) {
-      // break out of test loop.
-      break;
+      LOG(INFO) << "Test interrupted.";
+      Finalize();
+      return true;
     }
-    Dtype iter_loss;
-    const vector<Blob<Dtype>*>& result =
-        test_net->ForwardTest(bottom_vec,&iter_loss);
+
+    float iter_loss;
+    const vector<Blob*>& result = test_net->Forward(&iter_loss);
     if (param_.test_compute_loss()) {
       loss += iter_loss;
     }
     if (i == 0) {
       for (int j = 0; j < result.size(); ++j) {
-        const Dtype* result_vec = result[j]->cpu_data();
         for (int k = 0; k < result[j]->count(); ++k) {
-          test_score.push_back(result_vec[k]);
+          test_score.push_back(result[j]->data_at(k));
           test_score_output_id.push_back(j);
         }
       }
     } else {
       int idx = 0;
       for (int j = 0; j < result.size(); ++j) {
-        const Dtype* result_vec = result[j]->cpu_data();
         for (int k = 0; k < result[j]->count(); ++k) {
-          test_score[idx++] += result_vec[k];
+          test_score[idx++] += result[j]->data_at(k);
         }
       }
     }
   }
-  if (requested_early_exit_) {
-    LOG(INFO)     << "Test interrupted.";
-    return;
+
+  if (use_multi_gpu) {
+    callback_soft_barrier();
+    // now we've done, transfer results
+    for (int i = 0; i < root_callbacks_.size(); ++i) {
+      root_callbacks_[i]->saveTestResults(loss, test_score);
+    }
+    callback_soft_barrier();
+    float global_loss = 0.F;
+    vector<float> global_scores(test_score.size());
+    // aggregate test results from all solvers
+    for (int i = 0; i < root_callbacks_.size(); ++i) {
+      root_callbacks_[i]->aggregateTestResults(&global_loss, &global_scores);
+    }
+    callback_soft_barrier();
+    loss = global_loss;
+    for (int i = 0; i < test_score.size(); ++i) {
+      test_score[i] = global_scores[i];
+    }
   }
+
   if (param_.test_compute_loss()) {
     loss /= param_.test_iter(test_net_id);
     LOG(INFO) << "Test loss: " << loss;
@@ -846,20 +526,20 @@ vector<Blob<Dtype>*> bottom_vec;
     const int output_blob_index =
         test_net->output_blob_indices()[test_score_output_id[i]];
     const string& output_name = test_net->blob_names()[output_blob_index];
-    const Dtype loss_weight = test_net->blob_loss_weights()[output_blob_index];
+    const float loss_weight = test_net->blob_loss_weights()[output_blob_index];
     ostringstream loss_msg_stream;
-    const Dtype mean_score = test_score[i] / param_.test_iter(test_net_id);
+    const float mean_score = test_score[i] / test_iterations / Caffe::solver_count();
     if (loss_weight) {
       loss_msg_stream << " (* " << loss_weight
-                      << " = " << loss_weight * mean_score << " loss)";
+          << " = " << (loss_weight * mean_score) << " loss)";
     }
-    LOG(INFO) << "    Test net output #" << i << ": " << output_name << " = "
-              << mean_score << loss_msg_stream.str();
+    LOG_IF(INFO, Caffe::root_solver()) << "    Test net output #" << i <<
+        ": " << output_name << " = " << mean_score << loss_msg_stream.str();
   }
+  return false;
 }
 
-template <typename Dtype>
-void Solver<Dtype>::Snapshot() {
+void Solver::Snapshot() {
   CHECK(Caffe::root_solver());
   string model_filename;
   switch (param_.snapshot_format()) {
@@ -872,12 +552,10 @@ void Solver<Dtype>::Snapshot() {
   default:
     LOG(FATAL) << "Unsupported snapshot format.";
   }
-
   SnapshotSolverState(model_filename);
 }
 
-template <typename Dtype>
-void Solver<Dtype>::CheckSnapshotWritePermissions() {
+void Solver::CheckSnapshotWritePermissions() {
   if (Caffe::root_solver() && param_.snapshot()) {
     CHECK(param_.has_snapshot_prefix())
         << "In solver params, snapshot is specified but snapshot_prefix is not";
@@ -894,14 +572,11 @@ void Solver<Dtype>::CheckSnapshotWritePermissions() {
   }
 }
 
-template <typename Dtype>
-string Solver<Dtype>::SnapshotFilename(const string extension) {
-  return param_.snapshot_prefix() + "_iter_" + caffe::format_int(iter_)
-    + extension;
+string Solver::SnapshotFilename(const string extension) {
+  return param_.snapshot_prefix() + "_iter_" + caffe::format_int(iter_) + extension;
 }
 
-template <typename Dtype>
-string Solver<Dtype>::SnapshotToBinaryProto() {
+string Solver::SnapshotToBinaryProto() {
   string model_filename = SnapshotFilename(".caffemodel");
   LOG(INFO) << "Snapshotting to binary proto file " << model_filename;
   NetParameter net_param;
@@ -910,16 +585,14 @@ string Solver<Dtype>::SnapshotToBinaryProto() {
   return model_filename;
 }
 
-template <typename Dtype>
-string Solver<Dtype>::SnapshotToHDF5() {
+string Solver::SnapshotToHDF5() {
   string model_filename = SnapshotFilename(".caffemodel.h5");
   LOG(INFO) << "Snapshotting to HDF5 file " << model_filename;
   net_->ToHDF5(model_filename, param_.snapshot_diff());
   return model_filename;
 }
 
-template <typename Dtype>
-void Solver<Dtype>::Restore(const char* state_file) {
+void Solver::Restore(const char* state_file) {
   CHECK(Caffe::root_solver());
   string state_filename(state_file);
   if (state_filename.size() >= 3 &&
@@ -930,8 +603,7 @@ void Solver<Dtype>::Restore(const char* state_file) {
   }
 }
 
-template <typename Dtype>
-void Solver<Dtype>::UpdateSmoothedLoss(Dtype loss, int start_iter,
+void Solver::UpdateSmoothedLoss(float loss, int start_iter,
     int average_loss) {
   if (losses_.size() < average_loss) {
     losses_.push_back(loss);
@@ -944,38 +616,15 @@ void Solver<Dtype>::UpdateSmoothedLoss(Dtype loss, int start_iter,
   }
 }
 
-template <typename Dtype>
-                void Solver<Dtype>::GetValue(int &mpi_source,const int tid22,int tid) {
-                        MPI_Status status;
-                        vector<shared_ptr<Blob<Dtype> > >& net_params = this->net_->params_nc();
-for (int param_id = net_params.size()-1; param_id >= 0; --param_id)
-                                        caffe_mpi_recv<Dtype>(this->tempdata[tid][param_id]->mutable_gpu_data(),net_params[param_id]->count(),tid22,TAG_UPDATE,MPI_COMM_WORLD,&status);
-{
-                                unique_lock<mutex> lk(mutexUpdateWeight);
-                                this->flagComputeEndNeedUpdate[tid] = 1;
- 				++currentUpdateCount;
-                                condUpdateWeight.notify_all();
-                        }
+float Solver::perf_report(std::ostream& os, int device, int align) const {
+  std::string al(align, ' ');
+  float perf_ratio = total_lapse() > 0. ?
+      (iter() > 2 ? iter() - 2 - iterations_restored_ : 0) / total_lapse() : 0.F;
+  float perf = perf_ratio * net_->batch_per_solver();
+  os << al << "Solver performance on device " << device << ": "
+      << perf_ratio << " * " << net_->batch_per_solver()
+      << " = " << perf << " img/sec";
+  return perf;
 }
-
-template <typename Dtype>
-                Solver<Dtype>::~Solver(){
-                        if(this->rank==0){
-                                delete [] this->flagComputeEndNeedUpdate;
-                                vector<shared_ptr<Blob<Dtype> > >& net_params = this->net_->params_nc();
-                                for(int i=0;i<this->childProcessSum;++i){
-                                        for(int j=0;j<net_params.size();++j)
-                                                delete this->tempdata[i][j];
-                                        delete[] this->tempdata[i];
-                                }
-                                delete [] this->tempdata;
-                        }else{
-                        }
-                }
-
-
-
-
-INSTANTIATE_CLASS(Solver);
 
 }  // namespace caffe

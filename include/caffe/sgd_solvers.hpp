@@ -1,9 +1,7 @@
 #ifndef CAFFE_SGD_SOLVERS_HPP_
 #define CAFFE_SGD_SOLVERS_HPP_
 
-#include <string>
-#include <vector>
-
+#include "caffe/common.hpp"
 #include "caffe/solver.hpp"
 
 namespace caffe {
@@ -13,24 +11,30 @@ namespace caffe {
  *        stochastic gradient descent (SGD) with momentum.
  */
 template <typename Dtype>
-class SGDSolver : public Solver<Dtype> {
+class SGDSolver : public Solver {
  public:
-  explicit SGDSolver(const SolverParameter& param)
-      : Solver<Dtype>(param) { PreSolve(); }
-  explicit SGDSolver(const string& param_file)
-      : Solver<Dtype>(param_file) { PreSolve(); }
+  explicit SGDSolver(const SolverParameter& param,
+      size_t rank = 0U, Solver *root_solver = NULL)
+      : Solver(param, rank, root_solver) { PreSolve(); }
+  explicit SGDSolver(const string& param_file,
+      size_t rank = 0U, Solver *root_solver = NULL)
+      : Solver(param_file, rank) { PreSolve(); }
   virtual inline const char* type() const { return "SGD"; }
 
-  const vector<shared_ptr<Blob<Dtype> > >& history() { return history_; }
+  const vector<shared_ptr<TBlob<Dtype> > >& history() { return history_; }
+  void PrintRate(float rate = 0) override;
 
  protected:
   void PreSolve();
-  Dtype GetLearningRate();
-  virtual void ApplyUpdate();
-  virtual void Normalize(int param_id);
-  virtual void Regularize(int param_id);
-  virtual void ComputeUpdateValue(int param_id, Dtype rate);
-  virtual void ClipGradients();
+  float GetLearningRate();
+  float GetMomentum();
+  float local_decay(int param_id) const;
+  void ApplyUpdate(int param_id, void* handle, bool clear_grads) override;
+
+  virtual void Normalize(int param_id, void* handle);
+  virtual void Regularize(int param_id, void* handle);
+  virtual void ComputeUpdateValue(int param_id, void* handle, float rate, bool clear_grads);
+  virtual void ClipGradients(void* handle = nullptr);
   virtual void SnapshotSolverState(const string& model_filename);
   virtual void SnapshotSolverStateToBinaryProto(const string& model_filename);
   virtual void SnapshotSolverStateToHDF5(const string& model_filename);
@@ -40,57 +44,67 @@ class SGDSolver : public Solver<Dtype> {
   // update maintains update related data and is not needed in snapshots.
   // temp maintains other information that might be needed in computation
   //   of gradients/updates and is not needed in snapshots
-  vector<shared_ptr<Blob<Dtype> > > history_, update_, temp_;
+  vector<shared_ptr<TBlob<Dtype> > > history_, update_, temp_;
 
-  DISABLE_COPY_AND_ASSIGN(SGDSolver);
+  DISABLE_COPY_MOVE_AND_ASSIGN(SGDSolver);
 };
 
 template <typename Dtype>
 class NesterovSolver : public SGDSolver<Dtype> {
  public:
-  explicit NesterovSolver(const SolverParameter& param)
-      : SGDSolver<Dtype>(param) {}
-  explicit NesterovSolver(const string& param_file)
-      : SGDSolver<Dtype>(param_file) {}
+  explicit NesterovSolver(const SolverParameter& param,
+      size_t rank = 0U, Solver *root_solver = NULL)
+      : SGDSolver<Dtype>(param, rank, root_solver) {}
+  explicit NesterovSolver(const string& param_file,
+      size_t rank = 0U, Solver *root_solver = NULL)
+      : SGDSolver<Dtype>(param_file, rank, root_solver) {}
   virtual inline const char* type() const { return "Nesterov"; }
 
  protected:
-  virtual void ComputeUpdateValue(int param_id, Dtype rate);
+  void ComputeUpdateValue(int param_id, void* handle, float rate, bool clear_grads) override;
 
-  DISABLE_COPY_AND_ASSIGN(NesterovSolver);
+  DISABLE_COPY_MOVE_AND_ASSIGN(NesterovSolver);
 };
 
 template <typename Dtype>
 class AdaGradSolver : public SGDSolver<Dtype> {
  public:
-  explicit AdaGradSolver(const SolverParameter& param)
-      : SGDSolver<Dtype>(param) { constructor_sanity_check(); }
-  explicit AdaGradSolver(const string& param_file)
-      : SGDSolver<Dtype>(param_file) { constructor_sanity_check(); }
+  explicit AdaGradSolver(const SolverParameter& param,
+      size_t rank = 0U, Solver *root_solver = NULL)
+      : SGDSolver<Dtype>(param, rank, root_solver)
+        { constructor_sanity_check(); }
+  explicit AdaGradSolver(const string& param_file,
+      size_t rank = 0U, Solver *root_solver = NULL)
+      : SGDSolver<Dtype>(param_file, rank, root_solver)
+        { constructor_sanity_check(); }
   virtual inline const char* type() const { return "AdaGrad"; }
 
  protected:
-  virtual void ComputeUpdateValue(int param_id, Dtype rate);
+  void ComputeUpdateValue(int param_id, void* handle, float rate, bool clear_grads) override;
   void constructor_sanity_check() {
     CHECK_EQ(0, this->param_.momentum())
         << "Momentum cannot be used with AdaGrad.";
   }
 
-  DISABLE_COPY_AND_ASSIGN(AdaGradSolver);
+  DISABLE_COPY_MOVE_AND_ASSIGN(AdaGradSolver);
 };
 
 
 template <typename Dtype>
 class RMSPropSolver : public SGDSolver<Dtype> {
  public:
-  explicit RMSPropSolver(const SolverParameter& param)
-      : SGDSolver<Dtype>(param) { constructor_sanity_check(); }
-  explicit RMSPropSolver(const string& param_file)
-      : SGDSolver<Dtype>(param_file) { constructor_sanity_check(); }
+  explicit RMSPropSolver(const SolverParameter& param,
+      size_t rank = 0U, Solver *root_solver = NULL)
+      : SGDSolver<Dtype>(param, rank, root_solver)
+        { constructor_sanity_check(); }
+  explicit RMSPropSolver(const string& param_file,
+      size_t rank = 0U, Solver *root_solver = NULL)
+      : SGDSolver<Dtype>(param_file, rank, root_solver)
+        { constructor_sanity_check(); }
   virtual inline const char* type() const { return "RMSProp"; }
 
  protected:
-  virtual void ComputeUpdateValue(int param_id, Dtype rate);
+  void ComputeUpdateValue(int param_id, void* handle, float rate, bool clear_grads) override;
   void constructor_sanity_check() {
     CHECK_EQ(0, this->param_.momentum())
         << "Momentum cannot be used with RMSProp.";
@@ -100,23 +114,25 @@ class RMSPropSolver : public SGDSolver<Dtype> {
         << "rms_decay should lie between 0 and 1.";
   }
 
-  DISABLE_COPY_AND_ASSIGN(RMSPropSolver);
+  DISABLE_COPY_MOVE_AND_ASSIGN(RMSPropSolver);
 };
 
 template <typename Dtype>
 class AdaDeltaSolver : public SGDSolver<Dtype> {
  public:
-  explicit AdaDeltaSolver(const SolverParameter& param)
-      : SGDSolver<Dtype>(param) { AdaDeltaPreSolve(); }
-  explicit AdaDeltaSolver(const string& param_file)
-      : SGDSolver<Dtype>(param_file) { AdaDeltaPreSolve(); }
+  explicit AdaDeltaSolver(const SolverParameter& param,
+      size_t rank = 0U, Solver *root_solver = NULL)
+      : SGDSolver<Dtype>(param, rank, root_solver) { AdaDeltaPreSolve(); }
+  explicit AdaDeltaSolver(const string& param_file,
+      size_t rank = 0U, Solver *root_solver = NULL)
+      : SGDSolver<Dtype>(param_file, rank, root_solver) { AdaDeltaPreSolve(); }
   virtual inline const char* type() const { return "AdaDelta"; }
 
  protected:
   void AdaDeltaPreSolve();
-  virtual void ComputeUpdateValue(int param_id, Dtype rate);
+  void ComputeUpdateValue(int param_id, void* handle, float rate, bool clear_grads) override;
 
-  DISABLE_COPY_AND_ASSIGN(AdaDeltaSolver);
+  DISABLE_COPY_MOVE_AND_ASSIGN(AdaDeltaSolver);
 };
 
 /**
@@ -130,17 +146,19 @@ class AdaDeltaSolver : public SGDSolver<Dtype> {
 template <typename Dtype>
 class AdamSolver : public SGDSolver<Dtype> {
  public:
-  explicit AdamSolver(const SolverParameter& param)
-      : SGDSolver<Dtype>(param) { AdamPreSolve();}
-  explicit AdamSolver(const string& param_file)
-      : SGDSolver<Dtype>(param_file) { AdamPreSolve(); }
+  explicit AdamSolver(const SolverParameter& param,
+      size_t rank = 0U, Solver *root_solver = NULL)
+      : SGDSolver<Dtype>(param, rank, root_solver) { AdamPreSolve();}
+  explicit AdamSolver(const string& param_file,
+      size_t rank = 0U, Solver *root_solver = NULL)
+      : SGDSolver<Dtype>(param_file, rank, root_solver) { AdamPreSolve(); }
   virtual inline const char* type() const { return "Adam"; }
 
  protected:
   void AdamPreSolve();
-  virtual void ComputeUpdateValue(int param_id, Dtype rate);
+  void ComputeUpdateValue(int param_id, void* handle, float rate, bool clear_grads) override;
 
-  DISABLE_COPY_AND_ASSIGN(AdamSolver);
+  DISABLE_COPY_MOVE_AND_ASSIGN(AdamSolver);
 };
 
 }  // namespace caffe

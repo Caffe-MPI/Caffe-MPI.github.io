@@ -1,7 +1,7 @@
 
 set(CMAKE_SOURCE_DIR ..)
 set(LINT_COMMAND ${CMAKE_SOURCE_DIR}/scripts/cpp_lint.py)
-set(SRC_FILE_EXTENSIONS h hpp hu c cpp cu cc)
+set(SRC_FILE_EXTENSIONS h hpp hu c cpp cu cc cuh)
 set(EXCLUDE_FILE_EXTENSTIONS pb.h pb.cc)
 set(LINT_DIRS include src/caffe examples tools python matlab)
 
@@ -25,7 +25,7 @@ endforeach()
 list(REMOVE_ITEM LINT_SOURCES ${EXCLUDED_FILES})
 
 execute_process(
-    COMMAND ${LINT_COMMAND} ${LINT_SOURCES}
+    COMMAND ${LINT_COMMAND} --filter=-legal,-build/include,-runtime/references,-readability,-whitespace/comments ${LINT_SOURCES}
     ERROR_VARIABLE LINT_OUTPUT
     ERROR_STRIP_TRAILING_WHITESPACE
 )

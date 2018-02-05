@@ -2,20 +2,23 @@
 # Contributions simplifying and improving our build system are welcome!
 
 # cuDNN acceleration switch (uncomment to build with cuDNN).
+# cuDNN version 6 or higher is required.
 # USE_CUDNN := 1
 
+# NCCL acceleration switch (uncomment to build with NCCL)
+# See https://github.com/NVIDIA/nccl
+# USE_NCCL := 1
+
 # CPU-only switch (uncomment to build without GPU support).
+# Disables FP16 support.
 # CPU_ONLY := 1
+# Builds tests with 16 bit float support in addition to 32 and 64 bit.
+# TEST_FP16 := 1
 
 # uncomment to disable IO dependencies and corresponding data layers
 # USE_OPENCV := 0
 # USE_LEVELDB := 0
 # USE_LMDB := 0
-
-# uncomment to allow MDB_NOLOCK when reading LMDB files (only if necessary)
-#	You should not set this flag if you will be reading LMDBs with any
-#	possibility of simultaneous read and write
-# ALLOW_LMDB_NOLOCK := 1
 
 # Uncomment if you're using OpenCV 3
 # OPENCV_VERSION := 3
@@ -31,24 +34,20 @@ CUDA_DIR := /usr/local/cuda
 # CUDA_DIR := /usr
 
 # CUDA architecture setting: going with all of them.
-# For CUDA < 6.0, comment the *_50 lines for compatibility.
-CUDA_ARCH := -gencode arch=compute_20,code=sm_20 \
-		-gencode arch=compute_20,code=sm_21 \
-		-gencode arch=compute_30,code=sm_30 \
-		-gencode arch=compute_35,code=sm_35 \
-		-gencode arch=compute_50,code=sm_50 \
-		-gencode arch=compute_50,code=compute_50
+CUDA_ARCH := 	-gencode arch=compute_50,code=sm_50 \
+		-gencode arch=compute_52,code=sm_52 \
+		-gencode arch=compute_60,code=sm_60 \
+		-gencode arch=compute_61,code=sm_61 \
+		-gencode arch=compute_61,code=compute_61
 
 # BLAS choice:
-# atlas for ATLAS (default)
+# atlas for ATLAS
 # mkl for MKL
-# open for OpenBlas
-BLAS := atlas
+# open for OpenBlas - default, see https://github.com/xianyi/OpenBLAS
+BLAS := open
 # Custom (MKL/ATLAS/OpenBLAS) include and lib directories.
-# Leave commented to accept the defaults for your choice of BLAS
-# (which should work)!
-# BLAS_INCLUDE := /path/to/your/blas
-# BLAS_LIB := /path/to/your/blas
+BLAS_INCLUDE := /opt/OpenBLAS/include/
+BLAS_LIB := /opt/OpenBLAS/lib/
 
 # Homebrew puts openblas in a directory that is not on the standard search path
 # BLAS_INCLUDE := $(shell brew --prefix openblas)/include
@@ -87,8 +86,8 @@ PYTHON_LIB := /usr/lib
 # WITH_PYTHON_LAYER := 1
 
 # Whatever else you find you need goes here.
-INCLUDE_DIRS := $(PYTHON_INCLUDE) /usr/local/include
-LIBRARY_DIRS := $(PYTHON_LIB) /usr/local/lib /usr/lib
+INCLUDE_DIRS := $(PYTHON_INCLUDE) /usr/local/include /usr/include/hdf5/serial
+LIBRARY_DIRS := $(PYTHON_LIB) /usr/local/lib /usr/lib /usr/lib/x86_64-linux-gnu/hdf5/serial
 
 # If Homebrew is installed at a non standard location (for example your home directory) and you use it for general dependencies
 # INCLUDE_DIRS += $(shell brew --prefix)/include
@@ -98,7 +97,6 @@ LIBRARY_DIRS := $(PYTHON_LIB) /usr/local/lib /usr/lib
 # (Usually not necessary -- OpenCV libraries are normally installed in one of the above $LIBRARY_DIRS.)
 # USE_PKG_CONFIG := 1
 
-# N.B. both build and distribute dirs are cleared on `make clean`
 BUILD_DIR := build
 DISTRIBUTE_DIR := distribute
 
@@ -110,3 +108,6 @@ TEST_GPUID := 0
 
 # enable pretty build (comment to see full commands)
 Q ?= @
+
+# shared object suffix name to differentiate branches
+LIBRARY_NAME_SUFFIX := -nv

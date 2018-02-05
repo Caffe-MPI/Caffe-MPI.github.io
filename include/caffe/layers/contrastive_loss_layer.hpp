@@ -35,13 +35,13 @@ namespace caffe {
  *          d = \left| \left| a_n - b_n \right| \right|_2 @f$.
  * This can be used to train siamese networks.
  */
-template <typename Dtype>
-class ContrastiveLossLayer : public LossLayer<Dtype> {
+template <typename Ftype, typename Btype>
+class ContrastiveLossLayer : public LossLayer<Ftype, Btype> {
  public:
   explicit ContrastiveLossLayer(const LayerParameter& param)
-      : LossLayer<Dtype>(param), diff_() {}
-  virtual void LayerSetUp(const vector<Blob<Dtype>*>& bottom,
-      const vector<Blob<Dtype>*>& top);
+      : LossLayer<Ftype, Btype>(param), diff_() {}
+  virtual void LayerSetUp(const vector<Blob*>& bottom,
+      const vector<Blob*>& top);
 
   virtual inline int ExactNumBottomBlobs() const { return 3; }
   virtual inline const char* type() const { return "ContrastiveLoss"; }
@@ -55,10 +55,10 @@ class ContrastiveLossLayer : public LossLayer<Dtype> {
 
  protected:
   /// @copydoc ContrastiveLossLayer
-  virtual void Forward_cpu(const vector<Blob<Dtype>*>& bottom,
-      const vector<Blob<Dtype>*>& top);
-  virtual void Forward_gpu(const vector<Blob<Dtype>*>& bottom,
-      const vector<Blob<Dtype>*>& top);
+  virtual void Forward_cpu(const vector<Blob*>& bottom,
+      const vector<Blob*>& top);
+  virtual void Forward_gpu(const vector<Blob*>& bottom,
+      const vector<Blob*>& top);
 
   /**
    * @brief Computes the Contrastive error gradient w.r.t. the inputs.
@@ -85,15 +85,15 @@ class ContrastiveLossLayer : public LossLayer<Dtype> {
    *      the features @f$b@f$; Backward fills their diff with gradients if
    *      propagate_down[1]
    */
-  virtual void Backward_cpu(const vector<Blob<Dtype>*>& top,
-      const vector<bool>& propagate_down, const vector<Blob<Dtype>*>& bottom);
-  virtual void Backward_gpu(const vector<Blob<Dtype>*>& top,
-      const vector<bool>& propagate_down, const vector<Blob<Dtype>*>& bottom);
+  virtual void Backward_cpu(const vector<Blob*>& top,
+      const vector<bool>& propagate_down, const vector<Blob*>& bottom);
+  virtual void Backward_gpu(const vector<Blob*>& top,
+      const vector<bool>& propagate_down, const vector<Blob*>& bottom);
 
-  Blob<Dtype> diff_;  // cached for backward pass
-  Blob<Dtype> dist_sq_;  // cached for backward pass
-  Blob<Dtype> diff_sq_;  // tmp storage for gpu forward pass
-  Blob<Dtype> summer_vec_;  // tmp storage for gpu forward pass
+  TBlob<Ftype> diff_;  // cached for backward pass
+  TBlob<Ftype> dist_sq_;  // cached for backward pass
+  TBlob<Ftype> diff_sq_;  // tmp storage for gpu forward pass
+  TBlob<Ftype> summer_vec_;  // tmp storage for gpu forward pass
 };
 
 }  // namespace caffe

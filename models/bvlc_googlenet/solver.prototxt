@@ -1,16 +1,36 @@
 net: "models/bvlc_googlenet/train_val.prototxt"
-test_iter: 100
-test_interval: 4000
+
+test_iter: 10000		# 50000/32
+test_interval: 4000	
 test_initialization: false
-display: 100
-average_loss: 40
-base_lr: 0.01
-lr_policy: "step"
-stepsize: 320000
-gamma: 0.96
-max_iter: 2000000
+
+display:  100
+
+max_iter: 2600         # 60 epochs B=64
+base_lr:  0.01
+
+# DGX1 =====================================
+# max_iter: 300000        # 60 epochs B=256
+# base_lr:  0.02
+# DGX1 =====================================
+
+lr_policy: "poly"
+power: 2
 momentum: 0.9
 weight_decay: 0.0002
-snapshot: 40000
-snapshot_prefix: "models/bvlc_googlenet/bvlc_googlenet"
+
+snapshot: 1200000
+snapshot_prefix: "models/bvlc_googlenet/snapshots/googlenet"
+snapshot_after_train: true
+
 solver_mode: GPU
+random_seed: 1
+
+# Train dataset size = 1,281,167
+# Test dataset size  =    50,000
+
+# batch 64  --> epoch = 20,000  
+# batch 96  --> epoch = 15,000
+# batch 128 --> epoch = 10,000  
+# batch 256 --> epoch =  5,000  
+# batch 512 --> epoch =  2,500 

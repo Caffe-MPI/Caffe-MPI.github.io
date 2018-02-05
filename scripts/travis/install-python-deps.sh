@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # install extra Python dependencies
 # (must come after setup-venv)
 

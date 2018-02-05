@@ -1,0 +1,28 @@
+net: "models/cifar10_nv/cifar10_nv_train_test.prototxt"
+
+test_iter: 20			# test batch = 512
+test_interval: 400     		# 1 epoch
+
+display:  100
+max_iter: 100000	       # 256 epochs
+
+lr_policy: "poly"
+base_lr:   0.01
+power: 2
+#min_lr:   0.00001
+
+momentum: 0.9
+
+#momentum_policy: "poly"
+#momentum_power: 2
+#max_momentum: 0.95
+
+weight_decay: 0.004
+
+snapshot: 1000000
+snapshot_prefix: "models/cifar10_nv/snapshots/cifar10_nv"
+snapshot_after_train: false
+
+solver_mode: GPU
+
+#b=128 ==> 1 epoch=390

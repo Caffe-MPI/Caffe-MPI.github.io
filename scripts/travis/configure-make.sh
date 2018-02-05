@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 # raw Makefile configuration
 
 LINE () {
@@ -5,6 +6,10 @@ LINE () {
 }
 
 cp Makefile.config.example Makefile.config
+
+#Travis doesn't have CUDA driver installed
+LINE ""
+LINE "NO_NVML := 1"
 
 LINE "BLAS := open"
 LINE "WITH_PYTHON_LAYER := 1"

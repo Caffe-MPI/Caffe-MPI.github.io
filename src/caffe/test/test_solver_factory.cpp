@@ -1,12 +1,11 @@
 #include <map>
+#include <memory>
 #include <string>
 
-#include "boost/scoped_ptr.hpp"
-#include "google/protobuf/text_format.h"
+#include <google/protobuf/text_format.h>
 #include "gtest/gtest.h"
 
 #include "caffe/common.hpp"
-#include "caffe/solver.hpp"
 #include "caffe/solver_factory.hpp"
 
 #include "caffe/test/test_caffe_main.hpp"
@@ -34,15 +33,13 @@ class SolverFactoryTest : public MultiDeviceTest<TypeParam> {
 TYPED_TEST_CASE(SolverFactoryTest, TestDtypesAndDevices);
 
 TYPED_TEST(SolverFactoryTest, TestCreateSolver) {
-  typedef typename TypeParam::Dtype Dtype;
-  typename SolverRegistry<Dtype>::CreatorRegistry& registry =
-      SolverRegistry<Dtype>::Registry();
-  shared_ptr<Solver<Dtype> > solver;
+  typename SolverRegistry::CreatorRegistry& registry = SolverRegistry::Registry();
+  shared_ptr<Solver> solver;
   SolverParameter solver_param = this->simple_solver_param();
-  for (typename SolverRegistry<Dtype>::CreatorRegistry::iterator iter =
+  for (typename SolverRegistry::CreatorRegistry::iterator iter =
        registry.begin(); iter != registry.end(); ++iter) {
     solver_param.set_type(iter->first);
-    solver.reset(SolverRegistry<Dtype>::CreateSolver(solver_param));
+    solver.reset(SolverRegistry::CreateSolver(solver_param));
     EXPECT_EQ(iter->first, solver->type());
   }
 }

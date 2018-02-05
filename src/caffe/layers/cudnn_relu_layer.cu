@@ -5,94 +5,49 @@
 
 namespace caffe {
 
-template <typename Dtype>
-void CuDNNReLULayer<Dtype>::Forward_gpu(const vector<Blob<Dtype>*>& bottom,
-    const vector<Blob<Dtype>*>& top) {
+template <typename Ftype, typename Btype>
+void CuDNNReLULayer<Ftype, Btype>::Forward_gpu(const vector<Blob*>& bottom,
+     const vector<Blob*>& top) {
+  const Ftype* bottom_data = bottom[0]->gpu_data<Ftype>();
   // Fallback to standard Caffe for leaky ReLU.
-  if (ReLULayer<Dtype>::layer_param_.relu_param().negative_slope() != 0) {
-    return ReLULayer<Dtype>::Forward_gpu(bottom, top);
+  if (ReLULayer<Ftype, Btype>::layer_param_.relu_param().negative_slope() != 0) {
+    return ReLULayer<Ftype, Btype>::Forward_gpu(bottom, top);
   }
-
-  const Dtype* bottom_data = bottom[0]->gpu_data();
-  Dtype* top_data = top[0]->mutable_gpu_data();
-  // Ross
-  /*
-  CUDNN_CHECK(cudnnActivationForward(this->handle_,
-        CUDNN_ACTIVATION_RELU,
-        cudnn::dataType<Dtype>::one,
-        this->bottom_desc_, bottom_data,
-        cudnn::dataType<Dtype>::zero,
-        this->top_desc_, top_data));
-	*/
-#if CUDNN_VERSION_MIN(5, 0, 0)
-  //CUDNN_CHECK(cudnnActivationForward(Caffe::cudnn_handle(),
-  CUDNN_CHECK(cudnnActivationForward(this->handle_,
-        this->activ_desc_,
-        cudnn::dataType<Dtype>::one,
-		this->bottom_desc_, bottom_data,
-	    cudnn::dataType<Dtype>::zero,
-	    this->top_desc_, top_data));
-#else
-  //CUDNN_CHECK(cudnnActivationForward_v4(Caffe::cudnn_handle(),
-  CUDNN_CHECK(cudnnActivationForward(this->handle_,
-        this->activ_desc_,
-        cudnn::dataType<Dtype>::one,
-        this->bottom_desc_, bottom_data,
-        cudnn::dataType<Dtype>::zero,
-        this->top_desc_, top_data));
-#endif
-
+  CUDNN_CHECK(cudnnActivationForward(Caffe::cudnn_handle(),
+        activ_desc_,
+        cudnn::dataType<Ftype>::one,
+        fwd_bottom_desc_, bottom_data,
+        cudnn::dataType<Ftype>::zero,
+        fwd_top_desc_, top[0]->mutable_gpu_data<Ftype>()));
+  CUDA_CHECK(cudaStreamSynchronize(Caffe::thread_stream()));
 }
 
-template <typename Dtype>
-void CuDNNReLULayer<Dtype>::Backward_gpu(const vector<Blob<Dtype>*>& top,
+template <typename Ftype, typename Btype>
+void CuDNNReLULayer<Ftype, Btype>::Backward_gpu(const vector<Blob*>& top,
     const vector<bool>& propagate_down,
-    const vector<Blob<Dtype>*>& bottom) {
+    const vector<Blob*>& bottom) {
   if (!propagate_down[0]) {
     return;
   }
-
+  const Btype* top_data = top[0]->gpu_data<Btype>();
+  const Btype* top_diff = top[0]->gpu_diff<Btype>();
+  const Btype* bottom_data = bottom[0]->gpu_data<Btype>();
+  Btype* bottom_diff = bottom[0]->mutable_gpu_diff<Btype>();
   // Fallback to standard Caffe for leaky ReLU.
-  if (ReLULayer<Dtype>::layer_param_.relu_param().negative_slope() != 0) {
-    return ReLULayer<Dtype>::Backward_gpu(top, propagate_down, bottom);
+  if (ReLULayer<Ftype, Btype>::layer_param_.relu_param().negative_slope() != 0) {
+    return ReLULayer<Ftype, Btype>::Backward_gpu(top, propagate_down, bottom);
   }
-
-  const Dtype* top_data = top[0]->gpu_data();
-  const Dtype* top_diff = top[0]->gpu_diff();
-  const Dtype* bottom_data = bottom[0]->gpu_data();
-  Dtype* bottom_diff = bottom[0]->mutable_gpu_diff();
-  // @Ross
-  /*
-  CUDNN_CHECK(cudnnActivationBackward(this->handle_,
-        CUDNN_ACTIVATION_RELU,
-        cudnn::dataType<Dtype>::one,
-        this->top_desc_, top_data, this->top_desc_, top_diff,
-        this->bottom_desc_, bottom_data,
-        cudnn::dataType<Dtype>::zero,
-        this->bottom_desc_, bottom_diff));
-	*/
-#if CUDNN_VERSION_MIN(5, 0, 0)
-  //CUDNN_CHECK(cudnnActivationBackward(Caffe::cudnn_handle(),
-  CUDNN_CHECK(cudnnActivationBackward(this->handle_,
-        this->activ_desc_,
-        cudnn::dataType<Dtype>::one,
-        this->top_desc_, top_data, this->top_desc_, top_diff,
-        this->bottom_desc_, bottom_data,
-        cudnn::dataType<Dtype>::zero,
-        this->bottom_desc_, bottom_diff));
-#else
-  //CUDNN_CHECK(cudnnActivationBackward_v4(Caffe::cudnn_handle(),
-  CUDNN_CHECK(cudnnActivationBackward(this->handle_,
-        this->activ_desc_,
-        cudnn::dataType<Dtype>::one,
-        this->top_desc_, top_data, this->top_desc_, top_diff,
-        this->bottom_desc_, bottom_data,
-        cudnn::dataType<Dtype>::zero,
-        this->bottom_desc_, bottom_diff));
-#endif
+  CUDNN_CHECK(cudnnActivationBackward(Caffe::cudnn_handle(),
+        activ_desc_,
+        cudnn::dataType<Btype>::one,
+        bwd_top_desc_, top_data, bwd_top_desc_, top_diff,
+        bwd_bottom_desc_, bottom_data,
+        cudnn::dataType<Btype>::zero,
+        bwd_bottom_desc_, bottom_diff));
+  CUDA_CHECK(cudaStreamSynchronize(Caffe::thread_stream()));
 }
 
-INSTANTIATE_LAYER_GPU_FUNCS(CuDNNReLULayer);
+INSTANTIATE_LAYER_GPU_FUNCS_FB(CuDNNReLULayer);
 
 }  // namespace caffe
 #endif

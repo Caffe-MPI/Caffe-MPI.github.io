@@ -5,30 +5,30 @@
 
 namespace caffe {
 
-template <typename Dtype>
-void ELULayer<Dtype>::Forward_cpu(const vector<Blob<Dtype>*>& bottom,
-    const vector<Blob<Dtype>*>& top) {
-  const Dtype* bottom_data = bottom[0]->cpu_data();
-  Dtype* top_data = top[0]->mutable_cpu_data();
+template <typename Ftype, typename Btype>
+void ELULayer<Ftype, Btype>::Forward_cpu(const vector<Blob*>& bottom,
+    const vector<Blob*>& top) {
+  const Ftype* bottom_data = bottom[0]->cpu_data<Ftype>();
+  Ftype* top_data = top[0]->mutable_cpu_data<Ftype>();
   const int count = bottom[0]->count();
-  Dtype alpha = this->layer_param_.elu_param().alpha();
+  float alpha = this->layer_param_.elu_param().alpha();
   for (int i = 0; i < count; ++i) {
-    top_data[i] = std::max(bottom_data[i], Dtype(0))
-        + alpha * (exp(std::min(bottom_data[i], Dtype(0))) - Dtype(1));
+    top_data[i] = std::max(bottom_data[i], Ftype(0))
+        + alpha * (exp(std::min(bottom_data[i], Ftype(0))) - 1.F);
   }
 }
 
-template <typename Dtype>
-void ELULayer<Dtype>::Backward_cpu(const vector<Blob<Dtype>*>& top,
+template <typename Ftype, typename Btype>
+void ELULayer<Ftype, Btype>::Backward_cpu(const vector<Blob*>& top,
     const vector<bool>& propagate_down,
-    const vector<Blob<Dtype>*>& bottom) {
+    const vector<Blob*>& bottom) {
   if (propagate_down[0]) {
-    const Dtype* bottom_data = bottom[0]->cpu_data();
-    const Dtype* top_data = top[0]->cpu_data();
-    const Dtype* top_diff = top[0]->cpu_diff();
-    Dtype* bottom_diff = bottom[0]->mutable_cpu_diff();
+    const Btype* bottom_data = bottom[0]->cpu_data<Btype>();
+    const Btype* top_data = top[0]->cpu_data<Btype>();
+    const Btype* top_diff = top[0]->cpu_diff<Btype>();
+    Btype* bottom_diff = bottom[0]->mutable_cpu_diff<Btype>();
     const int count = bottom[0]->count();
-    Dtype alpha = this->layer_param_.elu_param().alpha();
+    float alpha = this->layer_param_.elu_param().alpha();
     for (int i = 0; i < count; ++i) {
       bottom_diff[i] = top_diff[i] * ((bottom_data[i] > 0)
           + (alpha + top_data[i]) * (bottom_data[i] <= 0));
@@ -41,7 +41,7 @@ void ELULayer<Dtype>::Backward_cpu(const vector<Blob<Dtype>*>& top,
 STUB_GPU(ELULayer);
 #endif
 
-INSTANTIATE_CLASS(ELULayer);
+INSTANTIATE_CLASS_FB(ELULayer);
 REGISTER_LAYER_CLASS(ELU);
 
 }  // namespace caffe

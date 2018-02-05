@@ -1058,11 +1058,12 @@ bool UpgradeSolverAsNeeded(const string& param_file, SolverParameter* param) {
 }
 
 // Read parameters from a file into a SolverParameter proto message.
-void ReadSolverParamsFromTextFileOrDie(const string& param_file,
-                                       SolverParameter* param) {
-  CHECK(ReadProtoFromTextFile(param_file, param))
+SolverParameter ReadSolverParamsFromTextFileOrDie(const string& param_file) {
+  SolverParameter param;
+  CHECK(ReadProtoFromTextFile(param_file, &param))
       << "Failed to parse SolverParameter file: " << param_file;
-  UpgradeSolverAsNeeded(param_file, param);
+  UpgradeSolverAsNeeded(param_file, &param);
+  return param;
 }
 
 }  // namespace caffe

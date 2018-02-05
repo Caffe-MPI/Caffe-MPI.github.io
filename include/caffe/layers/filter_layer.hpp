@@ -15,15 +15,15 @@ namespace caffe {
  * the corresponding item has to be filtered, non-zero means that corresponding
  * item needs to stay).
  */
-template <typename Dtype>
-class FilterLayer : public Layer<Dtype> {
+template <typename Ftype, typename Btype>
+class FilterLayer : public Layer<Ftype, Btype> {
  public:
   explicit FilterLayer(const LayerParameter& param)
-      : Layer<Dtype>(param) {}
-  virtual void LayerSetUp(const vector<Blob<Dtype>*>& bottom,
-      const vector<Blob<Dtype>*>& top);
-  virtual void Reshape(const vector<Blob<Dtype>*>& bottom,
-      const vector<Blob<Dtype>*>& top);
+      : Layer<Ftype, Btype>(param) {}
+  virtual void LayerSetUp(const vector<Blob*>& bottom,
+      const vector<Blob*>& top);
+  virtual void Reshape(const vector<Blob*>& bottom,
+      const vector<Blob*>& top);
 
   virtual inline const char* type() const { return "Filter"; }
   virtual inline int MinBottomBlobs() const { return 2; }
@@ -49,10 +49,10 @@ class FilterLayer : public Layer<Dtype> {
    *        where S is the number of items
    *        that haven't been filtered
    */
-  virtual void Forward_cpu(const vector<Blob<Dtype>*>& bottom,
-      const vector<Blob<Dtype>*>& top);
-  virtual void Forward_gpu(const vector<Blob<Dtype>*>& bottom,
-    const vector<Blob<Dtype>*>& top);
+  virtual void Forward_cpu(const vector<Blob*>& bottom,
+      const vector<Blob*>& top);
+  virtual void Forward_gpu(const vector<Blob*>& bottom,
+    const vector<Blob*>& top);
 
   /**
    * @brief Computes the error gradient w.r.t. the forwarded inputs.
@@ -63,10 +63,10 @@ class FilterLayer : public Layer<Dtype> {
    * @param bottom input Blob vector (length 2+), into which the top error
    *        gradient is copied
    */
-  virtual void Backward_cpu(const vector<Blob<Dtype>*>& top,
-      const vector<bool>& propagate_down, const vector<Blob<Dtype>*>& bottom);
-  virtual void Backward_gpu(const vector<Blob<Dtype>*>& top,
-    const vector<bool>& propagate_down, const vector<Blob<Dtype>*>& bottom);
+  virtual void Backward_cpu(const vector<Blob*>& top,
+      const vector<bool>& propagate_down, const vector<Blob*>& bottom);
+  virtual void Backward_gpu(const vector<Blob*>& top,
+    const vector<bool>& propagate_down, const vector<Blob*>& bottom);
 
   bool first_reshape_;
   vector<int> indices_to_forward_;

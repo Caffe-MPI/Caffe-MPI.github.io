@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # set default environment variables
 
 set -e

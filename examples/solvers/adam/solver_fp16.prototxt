@@ -1,0 +1,35 @@
+net: "examples/solvers/adam/train_val_fp16.prototxt"
+test_iter: 196          # 196=50000/256 
+test_interval: 5000     # 2 epoch
+test_initialization: false
+
+display: 100
+max_iter: 150000        # 60 epocs
+
+solver_type: ADAM
+delta: 1.0
+momentum: 0.9
+momentum2: 0.99
+
+base_lr: 0.1
+lr_policy: "fixed"
+#lr_policy: "poly"
+power: 2
+weight_decay: 0.0005
+
+snapshot: 150000
+snapshot_prefix: "examples/solvers/adam/adam_fp16"
+snapshot_after_train: false
+
+solver_mode: GPU
+random_seed: 1
+
+# Train dataset size = 1,281,167
+# Test dataset size  =    50,000
+
+# batch 64  --> epoch = 20,000
+# batch 96  --> epoch = 15,000
+# batch 128 --> epoch = 10,000
+# batch 256 --> epoch =  5,000 
+# batch 512 --> epoch =  2,500  #
+# batch 1024--> epoch =  1,250   

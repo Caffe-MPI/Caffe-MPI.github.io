@@ -18,8 +18,8 @@ class ReductionLayerTest : public MultiDeviceTest<TypeParam> {
 
  protected:
   ReductionLayerTest()
-      : blob_bottom_(new Blob<Dtype>(2, 3, 4, 5)),
-        blob_top_(new Blob<Dtype>()) {
+      : blob_bottom_(new TBlob<Dtype>(2, 3, 4, 3)),
+        blob_top_(new TBlob<Dtype>()) {
     // fill the values
     Caffe::set_random_seed(1701);
     FillerParameter filler_param;
@@ -40,8 +40,8 @@ class ReductionLayerTest : public MultiDeviceTest<TypeParam> {
     reduction_param->set_operation(op);
     if (coeff != 1.0) { reduction_param->set_coeff(coeff); }
     if (axis != 0) { reduction_param->set_axis(axis); }
-    shared_ptr<ReductionLayer<Dtype> > layer(
-        new ReductionLayer<Dtype>(layer_param));
+    shared_ptr<ReductionLayer<Dtype, Dtype> > layer(
+        new ReductionLayer<Dtype, Dtype>(layer_param));
     layer->SetUp(this->blob_bottom_vec_, this->blob_top_vec_);
     layer->Forward(this->blob_bottom_vec_, this->blob_top_vec_);
     const Dtype* in_data = this->blob_bottom_->cpu_data();
@@ -71,7 +71,7 @@ class ReductionLayerTest : public MultiDeviceTest<TypeParam> {
       }
       expected_result *= coeff;
       const Dtype computed_result = this->blob_top_->cpu_data()[n];
-      EXPECT_FLOAT_EQ(expected_result, computed_result)
+      EXPECT_NEAR(expected_result, computed_result, expected_result * tol<Dtype>(1.e-6, 5.e-3))
           << "Incorrect result computed with op "
           << ReductionParameter_ReductionOp_Name(op) << ", coeff " << coeff;
     }
@@ -85,16 +85,15 @@ class ReductionLayerTest : public MultiDeviceTest<TypeParam> {
     reduction_param->set_operation(op);
     reduction_param->set_coeff(coeff);
     reduction_param->set_axis(axis);
-    ReductionLayer<Dtype> layer(layer_param);
-    GradientChecker<Dtype> checker(1e-2, 2e-3);
-    checker.CheckGradientExhaustive(&layer, this->blob_bottom_vec_,
-        this->blob_top_vec_);
+    ReductionLayer<Dtype, Dtype> layer(layer_param);
+    GradientChecker<Dtype> checker(tol<Dtype>(1e-2, 1e-1), tol<Dtype>(2e-3, 5e-1));
+    checker.CheckGradientExhaustive(&layer, this->blob_bottom_vec_, this->blob_top_vec_);
   }
 
-  Blob<Dtype>* const blob_bottom_;
-  Blob<Dtype>* const blob_top_;
-  vector<Blob<Dtype>*> blob_bottom_vec_;
-  vector<Blob<Dtype>*> blob_top_vec_;
+  TBlob<Dtype>* const blob_bottom_;
+  TBlob<Dtype>* const blob_top_;
+  vector<Blob*> blob_bottom_vec_;
+  vector<Blob*> blob_top_vec_;
 };
 
 TYPED_TEST_CASE(ReductionLayerTest, TestDtypesAndDevices);
@@ -102,8 +101,8 @@ TYPED_TEST_CASE(ReductionLayerTest, TestDtypesAndDevices);
 TYPED_TEST(ReductionLayerTest, TestSetUp) {
   typedef typename TypeParam::Dtype Dtype;
   LayerParameter layer_param;
-  shared_ptr<ReductionLayer<Dtype> > layer(
-      new ReductionLayer<Dtype>(layer_param));
+  shared_ptr<ReductionLayer<Dtype, Dtype> > layer(
+      new ReductionLayer<Dtype, Dtype>(layer_param));
   layer->SetUp(this->blob_bottom_vec_, this->blob_top_vec_);
   ASSERT_EQ(this->blob_top_->num_axes(), 0);
 }
@@ -112,8 +111,8 @@ TYPED_TEST(ReductionLayerTest, TestSetUpWithAxis1) {
   typedef typename TypeParam::Dtype Dtype;
   LayerParameter layer_param;
   layer_param.mutable_reduction_param()->set_axis(1);
-  shared_ptr<ReductionLayer<Dtype> > layer(
-      new ReductionLayer<Dtype>(layer_param));
+  shared_ptr<ReductionLayer<Dtype, Dtype> > layer(
+      new ReductionLayer<Dtype, Dtype>(layer_param));
   layer->SetUp(this->blob_bottom_vec_, this->blob_top_vec_);
   ASSERT_EQ(this->blob_top_->num_axes(), 1);
   EXPECT_EQ(this->blob_top_->shape(0), 2);
@@ -123,8 +122,8 @@ TYPED_TEST(ReductionLayerTest, TestSetUpWithAxis2) {
   typedef typename TypeParam::Dtype Dtype;
   LayerParameter layer_param;
   layer_param.mutable_reduction_param()->set_axis(2);
-  shared_ptr<ReductionLayer<Dtype> > layer(
-      new ReductionLayer<Dtype>(layer_param));
+  shared_ptr<ReductionLayer<Dtype, Dtype> > layer(
+      new ReductionLayer<Dtype, Dtype>(layer_param));
   layer->SetUp(this->blob_bottom_vec_, this->blob_top_vec_);
   ASSERT_EQ(this->blob_top_->num_axes(), 2);
   EXPECT_EQ(this->blob_top_->shape(0), 2);
@@ -231,12 +230,18 @@ TYPED_TEST(ReductionLayerTest, TestAbsSumCoeffAxis1) {
 }
 
 TYPED_TEST(ReductionLayerTest, TestAbsSumGradient) {
+  if (!is_precise<TypeParam>()) {
+    return;  // overflows
+  }
   const ReductionParameter_ReductionOp kOp =
       ReductionParameter_ReductionOp_ASUM;
   this->TestGradient(kOp);
 }
 
 TYPED_TEST(ReductionLayerTest, TestAbsSumCoeffGradient) {
+  if (!is_precise<TypeParam>()) {
+    return;  // overflows
+  }
   const ReductionParameter_ReductionOp kOp =
       ReductionParameter_ReductionOp_ASUM;
   const float kCoeff = 2.3;
@@ -244,6 +249,9 @@ TYPED_TEST(ReductionLayerTest, TestAbsSumCoeffGradient) {
 }
 
 TYPED_TEST(ReductionLayerTest, TestAbsSumCoeffAxis1Gradient) {
+  if (!is_precise<TypeParam>()) {
+    return;  // overflows
+  }
   const ReductionParameter_ReductionOp kOp =
       ReductionParameter_ReductionOp_ASUM;
   const float kCoeff = 2.3;

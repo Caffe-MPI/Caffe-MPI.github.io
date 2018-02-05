@@ -1,9 +1,11 @@
+#!/usr/bin/env bash
 # CMake configuration
 
 mkdir -p build
 cd build
 
-ARGS="-DCMAKE_BUILD_TYPE=Release -DBLAS=Open"
+#Travis doesn't have CUDA driver installed
+ARGS="-DCMAKE_BUILD_TYPE=Release -DBLAS=Open -DNO_NVML=On"
 
 if $WITH_PYTHON3 ; then
   ARGS="$ARGS -Dpython_version=3"

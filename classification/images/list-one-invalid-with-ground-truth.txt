@@ -1,0 +1,8 @@
+/home/greg/ws/digits/examples/classification/images/one.png 1
+/home/greg/ws/digits/examples/classification/images/three.png 3
+/home/greg/ws/digits/examples/classification/images/four.png 4
+/toto/a.jpg 0
+/home/greg/ws/digits/examples/classification/images/five.png 5
+http://www.technographics.co.uk/wp-content/uploads/2013/06/resize_1372267720.jpg 9
+http://www.technographics.co.uk/wp-content/uploads/2013/06/resize_1372267720.jpg 25
+http://www.technographics.co.uk/wp-content/uploads/2013/06/resize_1372267720.jpg toto

@@ -1,0 +1,37 @@
+net: "models/bvlc_alexnet/train_val_fp16.prototxt"
+test_iter: 1562         # 50000/32
+test_interval: 5000      
+test_initialization: false
+
+display:  100
+
+max_iter: 300000  	# B=256, 60 epochs 
+base_lr:  0.01
+
+# DGX1 =====================================
+# max_iter: 125000	# B=1024, 100 epochs
+# base_lr:  0.02  	# init lr for B=1024            
+# min_lr:   0.000005	# end  lr for B=1024  
+# ==========================================
+
+lr_policy: "poly"
+power: 2.
+momentum: 0.9
+weight_decay: 0.0005
+
+snapshot: 500000
+snapshot_prefix: "models/bvlc_alexnet/snapshots/alexnet_fp16"
+snapshot_after_train: true
+
+solver_mode: GPU
+random_seed: 1
+
+# Train dataset size = 1,281,167
+# Test dataset size  =    50,000
+
+# batch 64  --> epoch = 20,000
+# batch 96  --> epoch = 15,000
+# batch 128 --> epoch = 10,000 
+# batch 256 --> epoch =  5,000  
+# batch 512 --> epoch =  2,500  
+# batch 1024--> epoch =  1,250

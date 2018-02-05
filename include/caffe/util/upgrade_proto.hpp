@@ -74,8 +74,7 @@ bool UpgradeSolverType(SolverParameter* solver_param);
 bool UpgradeSolverAsNeeded(const string& param_file, SolverParameter* param);
 
 // Read parameters from a file into a SolverParameter proto message.
-void ReadSolverParamsFromTextFileOrDie(const string& param_file,
-                                       SolverParameter* param);
+SolverParameter ReadSolverParamsFromTextFileOrDie(const string& param_file);
 
 }  // namespace caffe
 

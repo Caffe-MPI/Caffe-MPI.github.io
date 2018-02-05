@@ -12,13 +12,11 @@
 
 namespace caffe {
 
-template <typename TypeParam>
+template<typename TypeParam>
 class Im2colLayerTest : public MultiDeviceTest<TypeParam> {
   typedef typename TypeParam::Dtype Dtype;
  protected:
-  Im2colLayerTest()
-      : blob_bottom_(new Blob<Dtype>(2, 3, 6, 5)),
-        blob_top_(new Blob<Dtype>()) {
+  Im2colLayerTest() : blob_bottom_(new TBlob<Dtype>(2, 3, 6, 5)), blob_top_(new TBlob<Dtype>()) {
     // fill the values
     Caffe::set_random_seed(1701);
     FillerParameter filler_param;
@@ -27,11 +25,16 @@ class Im2colLayerTest : public MultiDeviceTest<TypeParam> {
     blob_bottom_vec_.push_back(blob_bottom_);
     blob_top_vec_.push_back(blob_top_);
   }
-  virtual ~Im2colLayerTest() { delete blob_bottom_; delete blob_top_; }
-  Blob<Dtype>* const blob_bottom_;
-  Blob<Dtype>* const blob_top_;
-  vector<Blob<Dtype>*> blob_bottom_vec_;
-  vector<Blob<Dtype>*> blob_top_vec_;
+
+  virtual ~Im2colLayerTest() {
+    delete blob_bottom_;
+    delete blob_top_;
+  }
+
+  TBlob<Dtype>* const blob_bottom_;
+  TBlob<Dtype>* const blob_top_;
+  vector<Blob*> blob_bottom_vec_;
+  vector<Blob*> blob_top_vec_;
 };
 
 TYPED_TEST_CASE(Im2colLayerTest, TestDtypesAndDevices);
@@ -39,8 +42,7 @@ TYPED_TEST_CASE(Im2colLayerTest, TestDtypesAndDevices);
 TYPED_TEST(Im2colLayerTest, TestSetup) {
   typedef typename TypeParam::Dtype Dtype;
   LayerParameter layer_param;
-  ConvolutionParameter* convolution_param =
-      layer_param.mutable_convolution_param();
+  ConvolutionParameter* convolution_param = layer_param.mutable_convolution_param();
   vector<int> bottom_shape;
   bottom_shape.push_back(2);
   bottom_shape.push_back(3);
@@ -50,7 +52,7 @@ TYPED_TEST(Im2colLayerTest, TestSetup) {
   convolution_param->add_kernel_size(3);
   convolution_param->add_stride(2);
   convolution_param->add_dilation(3);
-  Im2colLayer<Dtype> layer(layer_param);
+  Im2colLayer<Dtype, Dtype> layer(layer_param);
   layer.SetUp(this->blob_bottom_vec_, this->blob_top_vec_);
   EXPECT_EQ(this->blob_top_->num(), 2);
   EXPECT_EQ(this->blob_top_->channels(), 27);
@@ -61,11 +63,10 @@ TYPED_TEST(Im2colLayerTest, TestSetup) {
 TYPED_TEST(Im2colLayerTest, TestForward) {
   typedef typename TypeParam::Dtype Dtype;
   LayerParameter layer_param;
-  ConvolutionParameter* convolution_param =
-      layer_param.mutable_convolution_param();
+  ConvolutionParameter* convolution_param = layer_param.mutable_convolution_param();
   convolution_param->add_kernel_size(3);
   convolution_param->add_stride(2);
-  Im2colLayer<Dtype> layer(layer_param);
+  Im2colLayer<Dtype, Dtype> layer(layer_param);
   layer.SetUp(this->blob_bottom_vec_, this->blob_top_vec_);
   layer.Forward(this->blob_bottom_vec_, this->blob_top_vec_);
   // We are lazy and will only check the top left block
@@ -78,21 +79,18 @@ TYPED_TEST(Im2colLayerTest, TestForward) {
 TYPED_TEST(Im2colLayerTest, TestGradient) {
   typedef typename TypeParam::Dtype Dtype;
   LayerParameter layer_param;
-  ConvolutionParameter* convolution_param =
-      layer_param.mutable_convolution_param();
+  ConvolutionParameter* convolution_param = layer_param.mutable_convolution_param();
   convolution_param->add_kernel_size(3);
   convolution_param->add_stride(2);
-  Im2colLayer<Dtype> layer(layer_param);
-  GradientChecker<Dtype> checker(1e-2, 1e-2);
-  checker.CheckGradientExhaustive(&layer, this->blob_bottom_vec_,
-      this->blob_top_vec_);
+  Im2colLayer<Dtype, Dtype> layer(layer_param);
+  GradientChecker<Dtype> checker(tol<Dtype>(1e-2, 1e-1), tol<Dtype>(1e-2, 1e-1));
+  checker.CheckGradientExhaustive(&layer, this->blob_bottom_vec_, this->blob_top_vec_);
 }
 
 TYPED_TEST(Im2colLayerTest, TestDilatedGradient) {
   typedef typename TypeParam::Dtype Dtype;
   LayerParameter layer_param;
-  ConvolutionParameter* convolution_param =
-      layer_param.mutable_convolution_param();
+  ConvolutionParameter* convolution_param = layer_param.mutable_convolution_param();
   vector<int> bottom_shape;
   bottom_shape.push_back(2);
   bottom_shape.push_back(3);
@@ -102,31 +100,27 @@ TYPED_TEST(Im2colLayerTest, TestDilatedGradient) {
   convolution_param->add_kernel_size(3);
   convolution_param->add_stride(2);
   convolution_param->add_dilation(3);
-  Im2colLayer<Dtype> layer(layer_param);
+  Im2colLayer<Dtype, Dtype> layer(layer_param);
   GradientChecker<Dtype> checker(1e-2, 1e-2);
-  checker.CheckGradientExhaustive(&layer, this->blob_bottom_vec_,
-                                  this->blob_top_vec_);
+  checker.CheckGradientExhaustive(&layer, this->blob_bottom_vec_, this->blob_top_vec_);
 }
 
 TYPED_TEST(Im2colLayerTest, TestGradientForceND) {
   typedef typename TypeParam::Dtype Dtype;
   LayerParameter layer_param;
-  ConvolutionParameter* convolution_param =
-      layer_param.mutable_convolution_param();
+  ConvolutionParameter* convolution_param = layer_param.mutable_convolution_param();
   convolution_param->add_kernel_size(3);
   convolution_param->add_stride(2);
   convolution_param->set_force_nd_im2col(true);
-  Im2colLayer<Dtype> layer(layer_param);
-  GradientChecker<Dtype> checker(1e-2, 1e-2);
-  checker.CheckGradientExhaustive(&layer, this->blob_bottom_vec_,
-      this->blob_top_vec_);
+  Im2colLayer<Dtype, Dtype> layer(layer_param);
+  GradientChecker<Dtype> checker(tol<Dtype>(1e-2, 1e-1), tol<Dtype>(1e-2, 1e-1));
+  checker.CheckGradientExhaustive(&layer, this->blob_bottom_vec_, this->blob_top_vec_);
 }
 
 TYPED_TEST(Im2colLayerTest, TestDilatedGradientForceND) {
   typedef typename TypeParam::Dtype Dtype;
   LayerParameter layer_param;
-  ConvolutionParameter* convolution_param =
-      layer_param.mutable_convolution_param();
+  ConvolutionParameter* convolution_param = layer_param.mutable_convolution_param();
   vector<int> bottom_shape;
   bottom_shape.push_back(2);
   bottom_shape.push_back(3);
@@ -137,21 +131,19 @@ TYPED_TEST(Im2colLayerTest, TestDilatedGradientForceND) {
   convolution_param->add_stride(2);
   convolution_param->add_dilation(3);
   convolution_param->set_force_nd_im2col(true);
-  Im2colLayer<Dtype> layer(layer_param);
-  GradientChecker<Dtype> checker(1e-2, 1e-2);
-  checker.CheckGradientExhaustive(&layer, this->blob_bottom_vec_,
-                                  this->blob_top_vec_);
+  Im2colLayer<Dtype, Dtype> layer(layer_param);
+  GradientChecker<Dtype> checker(tol<Dtype>(1e-2, 1e-1), tol<Dtype>(1e-2, 1e-1));
+  checker.CheckGradientExhaustive(&layer, this->blob_bottom_vec_, this->blob_top_vec_);
 }
 
 TYPED_TEST(Im2colLayerTest, TestRect) {
   typedef typename TypeParam::Dtype Dtype;
   LayerParameter layer_param;
-  ConvolutionParameter* convolution_param =
-      layer_param.mutable_convolution_param();
+  ConvolutionParameter* convolution_param = layer_param.mutable_convolution_param();
   convolution_param->set_kernel_h(5);
   convolution_param->set_kernel_w(3);
   convolution_param->add_stride(2);
-  Im2colLayer<Dtype> layer(layer_param);
+  Im2colLayer<Dtype, Dtype> layer(layer_param);
   layer.SetUp(this->blob_bottom_vec_, this->blob_top_vec_);
   layer.Forward(this->blob_bottom_vec_, this->blob_top_vec_);
   // We are lazy and will only check the top left block
@@ -164,15 +156,13 @@ TYPED_TEST(Im2colLayerTest, TestRect) {
 TYPED_TEST(Im2colLayerTest, TestRectGradient) {
   typedef typename TypeParam::Dtype Dtype;
   LayerParameter layer_param;
-  ConvolutionParameter* convolution_param =
-      layer_param.mutable_convolution_param();
+  ConvolutionParameter* convolution_param = layer_param.mutable_convolution_param();
   convolution_param->set_kernel_h(5);
   convolution_param->set_kernel_w(3);
   convolution_param->add_stride(2);
-  Im2colLayer<Dtype> layer(layer_param);
-  GradientChecker<Dtype> checker(1e-2, 1e-2);
-  checker.CheckGradientExhaustive(&layer, this->blob_bottom_vec_,
-      this->blob_top_vec_);
+  Im2colLayer<Dtype, Dtype> layer(layer_param);
+  GradientChecker<Dtype> checker(tol<Dtype>(1e-2, 1e-1), tol<Dtype>(1e-2, 1e-1));
+  checker.CheckGradientExhaustive(&layer, this->blob_bottom_vec_, this->blob_top_vec_);
 }
 
 }  // namespace caffe

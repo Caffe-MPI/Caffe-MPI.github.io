@@ -1,0 +1,5 @@
+/home/greg/ws/digits/examples/classification/images/mean.jpg
+/home/greg/ws/digits/examples/classification/images/mean.jpg
+/home/greg/ws/digits/examples/classification/images/mean.jpg
+/home/greg/ws/digits/examples/classification/images/mean.jpg
+/home/greg/ws/digits/examples/classification/images/mean.jpg

@@ -16,8 +16,8 @@ namespace caffe {
  *        as specified by the scale @f$ \alpha @f$, shift @f$ \beta @f$,
  *        and base @f$ \gamma @f$.
  */
-template <typename Dtype>
-class ExpLayer : public NeuronLayer<Dtype> {
+template <typename Ftype, typename Btype>
+class ExpLayer : public NeuronLayer<Ftype, Btype> {
  public:
   /**
    * @param param provides ExpParameter exp_param,
@@ -28,9 +28,9 @@ class ExpLayer : public NeuronLayer<Dtype> {
    *         the base @f$ \gamma @f$
    */
   explicit ExpLayer(const LayerParameter& param)
-      : NeuronLayer<Dtype>(param) {}
-  virtual void LayerSetUp(const vector<Blob<Dtype>*>& bottom,
-      const vector<Blob<Dtype>*>& top);
+      : NeuronLayer<Ftype, Btype>(param) {}
+  virtual void LayerSetUp(const vector<Blob*>& bottom,
+      const vector<Blob*>& top);
 
   virtual inline const char* type() const { return "Exp"; }
 
@@ -45,10 +45,10 @@ class ExpLayer : public NeuronLayer<Dtype> {
    *        y = \gamma ^ {\alpha x + \beta}
    *      @f$
    */
-  virtual void Forward_cpu(const vector<Blob<Dtype>*>& bottom,
-      const vector<Blob<Dtype>*>& top);
-  virtual void Forward_gpu(const vector<Blob<Dtype>*>& bottom,
-      const vector<Blob<Dtype>*>& top);
+  virtual void Forward_cpu(const vector<Blob*>& bottom,
+      const vector<Blob*>& top);
+  virtual void Forward_gpu(const vector<Blob*>& bottom,
+      const vector<Blob*>& top);
 
   /**
    * @brief Computes the error gradient w.r.t. the exp inputs.
@@ -67,12 +67,12 @@ class ExpLayer : public NeuronLayer<Dtype> {
    *            \frac{\partial E}{\partial y} y \alpha \log_e(gamma)
    *      @f$ if propagate_down[0]
    */
-  virtual void Backward_cpu(const vector<Blob<Dtype>*>& top,
-      const vector<bool>& propagate_down, const vector<Blob<Dtype>*>& bottom);
-  virtual void Backward_gpu(const vector<Blob<Dtype>*>& top,
-      const vector<bool>& propagate_down, const vector<Blob<Dtype>*>& bottom);
+  virtual void Backward_cpu(const vector<Blob*>& top,
+      const vector<bool>& propagate_down, const vector<Blob*>& bottom);
+  virtual void Backward_gpu(const vector<Blob*>& top,
+      const vector<bool>& propagate_down, const vector<Blob*>& bottom);
 
-  Dtype inner_scale_, outer_scale_;
+  float inner_scale_, outer_scale_;
 };
 
 }  // namespace caffe

@@ -5,6 +5,7 @@ TODO:
 
 #include <stdint.h>
 #include <vector>
+#include "caffe/util/rng.hpp"
 
 #include "hdf5.h"
 #include "hdf5_hl.h"
@@ -13,9 +14,9 @@ TODO:
 
 namespace caffe {
 
-template <typename Dtype>
-void HDF5DataLayer<Dtype>::Forward_gpu(const vector<Blob<Dtype>*>& bottom,
-      const vector<Blob<Dtype>*>& top) {
+template <typename Ftype, typename Btype>
+void HDF5DataLayer<Ftype, Btype>::Forward_gpu(const vector<Blob*>& bottom,
+      const vector<Blob*>& top) {
   const int batch_size = this->layer_param_.hdf5_data_param().batch_size();
   for (int i = 0; i < batch_size; ++i, ++current_row_) {
     if (current_row_ == hdf_blobs_[0]->shape(0)) {
@@ -24,8 +25,7 @@ void HDF5DataLayer<Dtype>::Forward_gpu(const vector<Blob<Dtype>*>& bottom,
         if (current_file_ == num_files_) {
           current_file_ = 0;
           if (this->layer_param_.hdf5_data_param().shuffle()) {
-            std::random_shuffle(file_permutation_.begin(),
-                                file_permutation_.end());
+            caffe::shuffle(file_permutation_.begin(), file_permutation_.end());
           }
           DLOG(INFO) << "Looping around to first file.";
         }
@@ -34,17 +34,17 @@ void HDF5DataLayer<Dtype>::Forward_gpu(const vector<Blob<Dtype>*>& bottom,
       }
       current_row_ = 0;
       if (this->layer_param_.hdf5_data_param().shuffle())
-        std::random_shuffle(data_permutation_.begin(), data_permutation_.end());
+        caffe::shuffle(data_permutation_.begin(), data_permutation_.end());
     }
     for (int j = 0; j < this->layer_param_.top_size(); ++j) {
       int data_dim = top[j]->count() / top[j]->shape(0);
       caffe_copy(data_dim,
           &hdf_blobs_[j]->cpu_data()[data_permutation_[current_row_]
-            * data_dim], &top[j]->mutable_gpu_data()[i * data_dim]);
+            * data_dim], &top[j]->mutable_gpu_data<Ftype>()[i * data_dim]);
     }
   }
 }
 
-INSTANTIATE_LAYER_GPU_FUNCS(HDF5DataLayer);
+INSTANTIATE_LAYER_GPU_FUNCS_FB(HDF5DataLayer);
 
 }  // namespace caffe

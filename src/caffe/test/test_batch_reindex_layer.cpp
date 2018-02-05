@@ -18,9 +18,9 @@ class BatchReindexLayerTest : public MultiDeviceTest<TypeParam> {
 
  protected:
   BatchReindexLayerTest()
-      : blob_bottom_(new Blob<Dtype>()),
-        blob_bottom_permute_(new Blob<Dtype>()),
-        blob_top_(new Blob<Dtype>()) {
+      : blob_bottom_(new TBlob<Dtype>()),
+        blob_bottom_permute_(new TBlob<Dtype>()),
+        blob_top_(new TBlob<Dtype>()) {
   }
   virtual void SetUp() {
     Caffe::set_random_seed(1701);
@@ -52,11 +52,11 @@ class BatchReindexLayerTest : public MultiDeviceTest<TypeParam> {
     delete blob_bottom_;
     delete blob_top_;
   }
-  Blob<Dtype>* const blob_bottom_;
-  Blob<Dtype>* const blob_bottom_permute_;
-  Blob<Dtype>* const blob_top_;
-  vector<Blob<Dtype>*> blob_bottom_vec_;
-  vector<Blob<Dtype>*> blob_top_vec_;
+  TBlob<Dtype>* const blob_bottom_;
+  TBlob<Dtype>* const blob_bottom_permute_;
+  TBlob<Dtype>* const blob_top_;
+  vector<Blob*> blob_bottom_vec_;
+  vector<Blob*> blob_top_vec_;
 
   void TestForward() {
     LayerParameter layer_param;
@@ -78,7 +78,7 @@ class BatchReindexLayerTest : public MultiDeviceTest<TypeParam> {
     for (int i = 0; i < blob_bottom_permute_->count(); ++i) {
       blob_bottom_permute_->mutable_cpu_data()[i] = perm[i];
     }
-    BatchReindexLayer<Dtype> layer(layer_param);
+    BatchReindexLayer<Dtype, Dtype> layer(layer_param);
     layer.SetUp(blob_bottom_vec_, blob_top_vec_);
     EXPECT_EQ(blob_top_->num(), blob_bottom_permute_->num());
     EXPECT_EQ(blob_top_->channels(), blob_bottom_->channels());
@@ -109,8 +109,8 @@ TYPED_TEST(BatchReindexLayerTest, TestForward) {
 TYPED_TEST(BatchReindexLayerTest, TestGradient) {
   typedef typename TypeParam::Dtype Dtype;
   LayerParameter layer_param;
-  BatchReindexLayer<Dtype> layer(layer_param);
-  GradientChecker<Dtype> checker(1e-4, 1e-2);
+  BatchReindexLayer<Dtype, Dtype> layer(layer_param);
+  GradientChecker<Dtype> checker(tol<Dtype>(1e-4, 1e-2), tol<Dtype>(1e-2, 1e-1));
   checker.CheckGradientExhaustive(&layer, this->blob_bottom_vec_,
       this->blob_top_vec_, 0);
   }

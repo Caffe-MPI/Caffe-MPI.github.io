@@ -12,9 +12,9 @@
 
 namespace caffe {
 
-template <typename Dtype>
-void CropLayer<Dtype>::LayerSetUp(const vector<Blob<Dtype>*>& bottom,
-    const vector<Blob<Dtype>*>& top) {
+template <typename Ftype, typename Btype>
+void CropLayer<Ftype, Btype>::LayerSetUp(const vector<Blob*>& bottom,
+    const vector<Blob*>& top) {
   // LayerSetup() handles the number of dimensions; Reshape() handles the sizes.
   // bottom[0] supplies the data
   // bottom[1] supplies the size
@@ -32,9 +32,9 @@ void CropLayer<Dtype>::LayerSetUp(const vector<Blob<Dtype>*>& bottom,
   }
 }
 
-template <typename Dtype>
-void CropLayer<Dtype>::Reshape(const vector<Blob<Dtype>*>& bottom,
-    const vector<Blob<Dtype>*>& top) {
+template <typename Ftype, typename Btype>
+void CropLayer<Ftype, Btype>::Reshape(const vector<Blob*>& bottom,
+    const vector<Blob*>& top) {
   const CropParameter& param = this->layer_param_.crop_param();
   int input_dim = bottom[0]->num_axes();
   const int start_axis = bottom[0]->CanonicalAxisIndex(param.axis());
@@ -68,9 +68,10 @@ void CropLayer<Dtype>::Reshape(const vector<Blob<Dtype>*>& bottom,
   top[0]->Reshape(new_shape);
 }
 
+template <typename Ftype, typename Btype>
 template <typename Dtype>
-void CropLayer<Dtype>::crop_copy(const vector<Blob<Dtype>*>& bottom,
-             const vector<Blob<Dtype>*>& top,
+void CropLayer<Ftype, Btype>::crop_copy(const vector<Blob*>& bottom,
+             const vector<Blob*>& top,
              const vector<int>& offsets,
              vector<int> indices,
              int cur_dim,
@@ -111,23 +112,23 @@ void CropLayer<Dtype>::crop_copy(const vector<Blob<Dtype>*>& bottom,
   }
 }
 
-template <typename Dtype>
-void CropLayer<Dtype>::Forward_cpu(const vector<Blob<Dtype>*>& bottom,
-    const vector<Blob<Dtype>*>& top) {
+template <typename Ftype, typename Btype>
+void CropLayer<Ftype, Btype>::Forward_cpu(const vector<Blob*>& bottom,
+    const vector<Blob*>& top) {
   std::vector<int> indices(top[0]->num_axes(), 0);
-  const Dtype* bottom_data = bottom[0]->cpu_data();
-  Dtype* top_data = top[0]->mutable_cpu_data();
+  const Ftype* bottom_data = bottom[0]->cpu_data<Ftype>();
+  Ftype* top_data = top[0]->mutable_cpu_data<Ftype>();
   crop_copy(bottom, top, offsets, indices, 0, bottom_data, top_data, true);
 }
 
-template <typename Dtype>
-void CropLayer<Dtype>::Backward_cpu(const vector<Blob<Dtype>*>& top,
-    const vector<bool>& propagate_down, const vector<Blob<Dtype>*>& bottom) {
-  const Dtype* top_diff = top[0]->cpu_diff();
-  Dtype* bottom_diff = bottom[0]->mutable_cpu_diff();
+template <typename Ftype, typename Btype>
+void CropLayer<Ftype, Btype>::Backward_cpu(const vector<Blob*>& top,
+    const vector<bool>& propagate_down, const vector<Blob*>& bottom) {
+  const Btype* top_diff = top[0]->cpu_diff<Btype>();
+  Btype* bottom_diff = bottom[0]->mutable_cpu_diff<Btype>();
 
   if (propagate_down[0]) {
-    caffe_set(bottom[0]->count(), static_cast<Dtype>(0), bottom_diff);
+    caffe_set(bottom[0]->count(), static_cast<Btype>(0), bottom_diff);
     std::vector<int> indices(top[0]->num_axes(), 0);
     crop_copy(bottom, top, offsets, indices, 0, top_diff, bottom_diff, false);
   }
@@ -137,7 +138,7 @@ void CropLayer<Dtype>::Backward_cpu(const vector<Blob<Dtype>*>& top,
 STUB_GPU(CropLayer);
 #endif
 
-INSTANTIATE_CLASS(CropLayer);
+INSTANTIATE_CLASS_FB(CropLayer);
 REGISTER_LAYER_CLASS(Crop);
 
 }  // namespace caffe

@@ -17,13 +17,13 @@ namespace caffe {
  * batch.  The second blob is cast to int and treated as an index into the
  * first axis of the first blob.
  */
-template <typename Dtype>
-class BatchReindexLayer : public Layer<Dtype> {
+template <typename Ftype, typename Btype>
+class BatchReindexLayer : public Layer<Ftype, Btype> {
  public:
   explicit BatchReindexLayer(const LayerParameter& param)
-      : Layer<Dtype>(param) {}
-  virtual void Reshape(const vector<Blob<Dtype>*>& bottom,
-      const vector<Blob<Dtype>*>& top);
+      : Layer<Ftype, Btype>(param) {}
+  virtual void Reshape(const vector<Blob*>& bottom,
+      const vector<Blob*>& top);
 
   virtual inline const char* type() const { return "BatchReindex"; }
   virtual inline int ExactNumBottomBlobs() const { return 2; }
@@ -42,10 +42,10 @@ class BatchReindexLayer : public Layer<Dtype> {
    *        y = x_1[x_2]
    *      @f$
    */
-  virtual void Forward_cpu(const vector<Blob<Dtype>*>& bottom,
-      const vector<Blob<Dtype>*>& top);
-  virtual void Forward_gpu(const vector<Blob<Dtype>*>& bottom,
-      const vector<Blob<Dtype>*>& top);
+  virtual void Forward_cpu(const vector<Blob*>& bottom,
+      const vector<Blob*>& top);
+  virtual void Forward_gpu(const vector<Blob*>& bottom,
+      const vector<Blob*>& top);
 
   /**
    * @brief Computes the error gradient w.r.t. the reordered input.
@@ -62,10 +62,10 @@ class BatchReindexLayer : public Layer<Dtype> {
    *   - This layer cannot backprop to x_2, i.e. propagate_down[1] must be
    *     false.
    */
-  virtual void Backward_cpu(const vector<Blob<Dtype>*>& top,
-      const vector<bool>& propagate_down, const vector<Blob<Dtype>*>& bottom);
-  virtual void Backward_gpu(const vector<Blob<Dtype>*>& top,
-      const vector<bool>& propagate_down, const vector<Blob<Dtype>*>& bottom);
+  virtual void Backward_cpu(const vector<Blob*>& top,
+      const vector<bool>& propagate_down, const vector<Blob*>& bottom);
+  virtual void Backward_gpu(const vector<Blob*>& top,
+      const vector<bool>& propagate_down, const vector<Blob*>& bottom);
 
  private:
   struct pair_sort_first {
@@ -74,8 +74,17 @@ class BatchReindexLayer : public Layer<Dtype> {
       return left.first < right.first;
     }
   };
+
+  template<typename Dtype>
   void check_batch_reindex(int initial_num, int final_num,
-                           const Dtype* ridx_data);
+                           const Dtype* ridx_data) {
+    for (int i = 0; i < final_num; ++i) {
+      CHECK_GE(ridx_data[i], 0)
+          << "Index specified for reindex layer was negative.";
+      CHECK_LT(ridx_data[i], initial_num)
+          << "Index specified for reindex layer was greater than batch size.";
+    }
+  }
 };
 
 }  // namespace caffe

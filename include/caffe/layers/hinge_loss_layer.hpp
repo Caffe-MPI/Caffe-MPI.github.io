@@ -54,18 +54,18 @@ namespace caffe {
  * outside the InnerProductLayer and no other losses outside the
  * HingeLossLayer).
  */
-template <typename Dtype>
-class HingeLossLayer : public LossLayer<Dtype> {
+template <typename Ftype, typename Btype>
+class HingeLossLayer : public LossLayer<Ftype, Btype> {
  public:
   explicit HingeLossLayer(const LayerParameter& param)
-      : LossLayer<Dtype>(param) {}
+      : LossLayer<Ftype, Btype>(param) {}
 
   virtual inline const char* type() const { return "HingeLoss"; }
 
  protected:
   /// @copydoc HingeLossLayer
-  virtual void Forward_cpu(const vector<Blob<Dtype>*>& bottom,
-      const vector<Blob<Dtype>*>& top);
+  virtual void Forward_cpu(const vector<Blob*>& bottom,
+      const vector<Blob*>& top);
 
   /**
    * @brief Computes the hinge loss error gradient w.r.t. the predictions.
@@ -94,8 +94,8 @@ class HingeLossLayer : public LossLayer<Dtype> {
    *   -# @f$ (N \times 1 \times 1 \times 1) @f$
    *      the labels -- ignored as we can't compute their error gradients
    */
-  virtual void Backward_cpu(const vector<Blob<Dtype>*>& top,
-      const vector<bool>& propagate_down, const vector<Blob<Dtype>*>& bottom);
+  virtual void Backward_cpu(const vector<Blob*>& top,
+      const vector<bool>& propagate_down, const vector<Blob*>& bottom);
 };
 
 

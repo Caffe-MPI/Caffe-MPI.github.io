@@ -2,7 +2,7 @@
 #include <utility>
 #include <vector>
 
-#include "google/protobuf/text_format.h"
+#include <google/protobuf/text_format.h>
 #include "gtest/gtest.h"
 
 #include "caffe/common.hpp"
@@ -38,7 +38,7 @@ class SolverTest : public MultiDeviceTest<TypeParam> {
     solver_.reset(new SGDSolver<Dtype>(param));
   }
 
-  shared_ptr<Solver<Dtype> > solver_;
+  shared_ptr<Solver> solver_;
 };
 
 TYPED_TEST_CASE(SolverTest, TestDtypesAndDevices);

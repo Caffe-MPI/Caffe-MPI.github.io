@@ -10,9 +10,12 @@ endif()
 project(Caffe C CXX)
 
 # ---[ Caffe version
-set(CAFFE_TARGET_VERSION "1.0.0-rc3" CACHE STRING "Caffe logical version")
-set(CAFFE_TARGET_SOVERSION "1.0.0-rc3" CACHE STRING "Caffe soname version")
+set(CAFFE_TARGET_VERSION "0.16.2")
+set(CAFFE_TARGET_SOVERSION "0.16")
 add_definitions(-DCAFFE_VERSION=${CAFFE_TARGET_VERSION})
+
+# Skip `typedef __half half;`
+add_definitions(-DCUDA_NO_HALF=1)
 
 # ---[ Using cmake scripts and modules
 list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake/Modules)
@@ -28,6 +31,21 @@ include(cmake/ConfigGen.cmake)
 # ---[ Options
 caffe_option(CPU_ONLY  "Build Caffe without CUDA support" OFF) # TODO: rename to USE_CUDA
 caffe_option(USE_CUDNN "Build Caffe with cuDNN library support" ON IF NOT CPU_ONLY)
+
+# USE_NCCL: Build Caffe with NCCL Library support
+# Regular ON/OFF option doesn't work here because we need to recognize 3 states:
+# 1. User didn't set USE_NCCL option =>
+#   1.1 If CPU_ONLY is ON we do nothing.
+#   1.2 If CPU_ONLY is OFF we *quietly* try to find it and use if found; do nothing otherwise.
+# 2. User explicitly set USE_NCCL=ON option =>
+#   1.1 If CPU_ONLY is ON we do nothing (it's higher priority).
+#   2.1 If CPU_ONLY is OFF we try to find it with *required* option, thus CMake fails if not found. 
+# 3. User explicitly set USE_NCCL=OFF option => we do nothing.
+SET(USE_NCCL)
+if(DEFINED USE_NCCL)
+  STRING(TOUPPER "${USE_NCCL}" USE_NCCL)
+endif()
+
 caffe_option(BUILD_SHARED_LIBS "Build shared libraries" ON)
 caffe_option(BUILD_python "Build Python wrapper" ON)
 set(python_version "2" CACHE STRING "Specify which Python version to use")
@@ -38,13 +56,15 @@ caffe_option(USE_OPENCV "Build with OpenCV support" ON)
 caffe_option(USE_LEVELDB "Build with levelDB" ON)
 caffe_option(USE_LMDB "Build with lmdb" ON)
 caffe_option(ALLOW_LMDB_NOLOCK "Allow MDB_NOLOCK when reading LMDB files (only if necessary)" OFF)
+caffe_option(TEST_FP16 "Build Caffe Tests with 16 bit mode included" OFF)
+caffe_option(NO_NVML "Build Caffe Tests without NVML (i.e. no CPU affinity)" OFF)
 
 # ---[ Dependencies
 include(cmake/Dependencies.cmake)
 
 # ---[ Flags
 if(UNIX OR APPLE)
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIC -Wall")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIC -Wall -std=c++11")
 endif()
 
 caffe_set_caffe_link()
@@ -53,6 +73,8 @@ if(USE_libstdcpp)
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -stdlib=libstdc++")
   message("-- Warning: forcing libstdc++ (controlled by USE_libstdcpp option in cmake)")
 endif()
+
+set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -DDEBUG")
 
 add_definitions(-DGTEST_USE_OWN_TR1_TUPLE)
 
@@ -64,7 +86,8 @@ configure_file(cmake/Templates/caffe_config.h.in "${PROJECT_BINARY_DIR}/caffe_co
 
 # ---[ Includes
 set(Caffe_INCLUDE_DIR ${PROJECT_SOURCE_DIR}/include)
-include_directories(${Caffe_INCLUDE_DIR} ${PROJECT_BINARY_DIR})
+set(THIRDPARTY_DIR ${PROJECT_SOURCE_DIR}/3rdparty)
+include_directories(${Caffe_INCLUDE_DIR} ${PROJECT_BINARY_DIR} ${THIRDPARTY_DIR})
 include_directories(BEFORE src) # This is needed for gtest.
 
 # ---[ Subdirectories

@@ -4,9 +4,10 @@
 
 #include "caffe/common.hpp"
 #include "caffe/syncedmem.hpp"
+#include "caffe/test/test_caffe_main.hpp"
+#include "caffe/type.hpp"
 #include "caffe/util/math_functions.hpp"
 
-#include "caffe/test/test_caffe_main.hpp"
 
 namespace caffe {
 
@@ -27,10 +28,15 @@ class RandomNumberGeneratorTest : public ::testing::Test {
   }
 
   Dtype sample_mean(const Dtype* const seqs, const int sample_size) {
-    Dtype sum = 0;
+    Dtype sum = 0, psum = 0;
     for (int i = 0; i < sample_size; ++i) {
-      sum += seqs[i];
+      psum += seqs[i];
+      if (i > 0 && i % 100 == 0) {
+        sum += psum;
+        psum = 0.;
+      }
     }
+    sum += psum;
     return sum / sample_size;
   }
 
@@ -39,10 +45,15 @@ class RandomNumberGeneratorTest : public ::testing::Test {
   }
 
   Dtype sample_mean(const int* const seqs, const int sample_size) {
-    Dtype sum = 0;
+    Dtype sum = 0, psum = 0;
     for (int i = 0; i < sample_size; ++i) {
-      sum += Dtype(seqs[i]);
+      psum += seqs[i];
+      if (i > 0 && i % 100 == 0) {
+        sum += psum;
+        psum = 0.;
+      }
     }
+    sum += psum;
     return sum / sample_size;
   }
 
@@ -58,7 +69,7 @@ class RandomNumberGeneratorTest : public ::testing::Test {
     return mean_bound(std, sample_size_);
   }
 
-  void RngGaussianFill(const Dtype mu, const Dtype sigma, void* cpu_data) {
+  void RngGaussianFill(float mu, float sigma, void* cpu_data) {
     Dtype* rng_data = static_cast<Dtype*>(cpu_data);
     caffe_rng_gaussian(sample_size_, mu, sigma, rng_data);
   }
@@ -91,17 +102,21 @@ class RandomNumberGeneratorTest : public ::testing::Test {
     }
     EXPECT_EQ(0, num_nan);
     if (sparse_p == Dtype(0)) {
-      EXPECT_EQ(0, num_mean);
+      if (is_precise<Dtype>()) {
+        EXPECT_EQ(0, num_mean);
+      } else {
+        EXPECT_LE(num_mean, 5);
+      }
     }
     const Dtype sample_p_above_mean =
         static_cast<Dtype>(num_above_mean) / sample_size_;
-    const Dtype bernoulli_p = (1 - sparse_p) * 0.5;
-    const Dtype bernoulli_std = sqrt(bernoulli_p * (1 - bernoulli_p));
+    const Dtype bernoulli_p = (1. - sparse_p) * 0.5;
+    const Dtype bernoulli_std = sqrt(bernoulli_p * (1. - bernoulli_p));
     const Dtype bernoulli_bound = this->mean_bound(bernoulli_std);
     EXPECT_NEAR(bernoulli_p, sample_p_above_mean, bernoulli_bound);
   }
 
-  void RngUniformFill(const Dtype lower, const Dtype upper, void* cpu_data) {
+  void RngUniformFill(float lower, float upper, void* cpu_data) {
     CHECK_GE(upper, lower);
     Dtype* rng_data = static_cast<Dtype*>(cpu_data);
     caffe_rng_uniform(sample_size_, lower, upper, rng_data);
@@ -115,7 +130,9 @@ class RandomNumberGeneratorTest : public ::testing::Test {
     // Check that sample mean roughly matches true mean.
     const Dtype bound = this->mean_bound(true_std);
     const Dtype sample_mean = this->sample_mean(rng_data);
-    EXPECT_NEAR(sample_mean, true_mean, bound);
+    if (!is_type<Dtype>(FLOAT16)) {  // true_mean evaluates to 2147483648
+      EXPECT_NEAR(sample_mean, true_mean, bound);
+    }
     // Check that roughly half the samples are above the true mean, and none are
     // above upper or below lower.
     int num_above_mean = 0;
@@ -141,15 +158,23 @@ class RandomNumberGeneratorTest : public ::testing::Test {
       }
     }
     EXPECT_EQ(0, num_nan);
-    EXPECT_EQ(0, num_above_upper);
-    EXPECT_EQ(0, num_below_lower);
+    if (is_type<Dtype>(FLOAT16)) {
+      EXPECT_LE(num_below_lower, 4);
+    } else {
+      EXPECT_EQ(0, num_below_lower);
+    }
     if (sparse_p == Dtype(0)) {
-      EXPECT_EQ(0, num_mean);
+      if (is_type<Dtype>(FLOAT16)) {
+        EXPECT_LE(num_mean, 15);
+      } else {
+        EXPECT_EQ(0, num_above_upper);
+        EXPECT_EQ(0, num_mean);
+      }
     }
     const Dtype sample_p_above_mean =
         static_cast<Dtype>(num_above_mean) / sample_size_;
-    const Dtype bernoulli_p = (1 - sparse_p) * 0.5;
-    const Dtype bernoulli_std = sqrt(bernoulli_p * (1 - bernoulli_p));
+    const Dtype bernoulli_p = (1. - sparse_p) * 0.5;
+    const Dtype bernoulli_std = sqrt(bernoulli_p * (1. - bernoulli_p));
     const Dtype bernoulli_bound = this->mean_bound(bernoulli_std);
     EXPECT_NEAR(bernoulli_p, sample_p_above_mean, bernoulli_bound);
   }
@@ -162,7 +187,7 @@ class RandomNumberGeneratorTest : public ::testing::Test {
   void RngBernoulliChecks(const Dtype p, const void* cpu_data) {
     const int* rng_data = static_cast<const int*>(cpu_data);
     const Dtype true_mean = p;
-    const Dtype true_std = sqrt(p * (1 - p));
+    const Dtype true_std = sqrt(p * (1. - p));
     const Dtype bound = this->mean_bound(true_std);
     const Dtype sample_mean = this->sample_mean(rng_data);
     EXPECT_NEAR(sample_mean, true_mean, bound);
@@ -278,8 +303,8 @@ TYPED_TEST(RandomNumberGeneratorTest, TestRngGaussianTimesGaussian) {
   }
 
   // Check that result has mean 0.
-  TypeParam mu_product = pow(mu, 2);
-  TypeParam sigma_product = sqrt(pow(sigma, 2) / 2);
+  TypeParam mu_product = pow(mu, TypeParam(2.));
+  TypeParam sigma_product = sqrt(pow(sigma, TypeParam(2.)) / 2);
   this->RngGaussianChecks(mu_product, sigma_product, gaussian_data_1);
 }
 
@@ -333,7 +358,7 @@ TYPED_TEST(RandomNumberGeneratorTest, TestRngGaussianTimesBernoulli) {
 
   // Check that result does not violate checked properties of sparsified
   // Gaussian (though it is not actually a Gaussian).
-  this->RngGaussianChecks(mu, sigma, gaussian_data, 1 - bernoulli_p);
+  this->RngGaussianChecks(mu, sigma, gaussian_data, 1. - bernoulli_p);
 }
 
 
@@ -358,7 +383,7 @@ TYPED_TEST(RandomNumberGeneratorTest, TestRngUniformTimesBernoulli) {
 
   // Check that result does not violate checked properties of sparsified
   // Uniform on [-1, 1] (though it is not actually uniformly distributed).
-  this->RngUniformChecks(lower, upper, uniform_data, 1 - bernoulli_p);
+  this->RngUniformChecks(lower, upper, uniform_data, 1. - bernoulli_p);
 }
 
 
@@ -390,7 +415,7 @@ TYPED_TEST(RandomNumberGeneratorTest, TestRngBernoulliTimesBernoulli) {
   // Check that resulting product has roughly p_a * p_b ones.
   const TypeParam sample_p = this->sample_mean(bernoulli_data_a);
   const TypeParam true_mean = p_a * p_b;
-  const TypeParam true_std = sqrt(true_mean * (1 - true_mean));
+  const TypeParam true_std = sqrt(true_mean * (1. - true_mean));
   const TypeParam bound = this->mean_bound(true_std);
   EXPECT_NEAR(true_mean, sample_p, bound);
 }
@@ -438,6 +463,9 @@ TYPED_TEST(RandomNumberGeneratorTest, TestRngUniform2GPU) {
 
 
 TYPED_TEST(RandomNumberGeneratorTest, TestRngUniformIntGPU) {
+  if (!is_precise<TypeParam>()) {
+    return;
+  }
   unsigned int* uniform_uint_gpu_data =
       static_cast<unsigned int*>(this->int_data_->mutable_gpu_data());
   this->RngUniformIntFillGPU(uniform_uint_gpu_data);
@@ -449,7 +477,7 @@ TYPED_TEST(RandomNumberGeneratorTest, TestRngUniformIntGPU) {
     uniform_data[i] = static_cast<const TypeParam>(uniform_uint_data[i]);
   }
   const TypeParam lower = 0;
-  const TypeParam upper = UINT_MAX;
+  const TypeParam upper = sizeof(TypeParam) > 2 ? UINT_MAX : 64000U;
   this->RngUniformChecks(lower, upper, uniform_data);
 }
 
@@ -479,8 +507,8 @@ TYPED_TEST(RandomNumberGeneratorTest, TestRngGaussianTimesGaussianGPU) {
 
   // Check that result does not violate checked properties of Gaussian
   // (though it is not actually a Gaussian).
-  TypeParam mu_product = pow(mu, 2);
-  TypeParam sigma_product = sqrt(pow(sigma, 2) / 2);
+  TypeParam mu_product = pow(mu, TypeParam(2.));
+  TypeParam sigma_product = sqrt(pow(sigma, TypeParam(2.)) / 2);
   this->RngGaussianChecks(mu_product, sigma_product, gaussian_data_1);
 }
 

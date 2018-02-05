@@ -16,8 +16,8 @@ class ThresholdLayerTest : public MultiDeviceTest<TypeParam> {
   typedef typename TypeParam::Dtype Dtype;
  protected:
   ThresholdLayerTest()
-      : blob_bottom_(new Blob<Dtype>(2, 3, 6, 5)),
-        blob_top_(new Blob<Dtype>()) {
+      : blob_bottom_(new TBlob<Dtype>(2, 3, 6, 5)),
+        blob_top_(new TBlob<Dtype>()) {
     Caffe::set_random_seed(1701);
     // fill the values
     FillerParameter filler_param;
@@ -27,10 +27,10 @@ class ThresholdLayerTest : public MultiDeviceTest<TypeParam> {
     blob_top_vec_.push_back(blob_top_);
   }
   virtual ~ThresholdLayerTest() { delete blob_bottom_; delete blob_top_; }
-  Blob<Dtype>* const blob_bottom_;
-  Blob<Dtype>* const blob_top_;
-  vector<Blob<Dtype>*> blob_bottom_vec_;
-  vector<Blob<Dtype>*> blob_top_vec_;
+  TBlob<Dtype>* const blob_bottom_;
+  TBlob<Dtype>* const blob_top_;
+  vector<Blob*> blob_bottom_vec_;
+  vector<Blob*> blob_top_vec_;
 };
 
 TYPED_TEST_CASE(ThresholdLayerTest, TestDtypesAndDevices);
@@ -39,7 +39,7 @@ TYPED_TEST_CASE(ThresholdLayerTest, TestDtypesAndDevices);
 TYPED_TEST(ThresholdLayerTest, TestSetup) {
   typedef typename TypeParam::Dtype Dtype;
   LayerParameter layer_param;
-  ThresholdLayer<Dtype> layer(layer_param);
+  ThresholdLayer<Dtype, Dtype> layer(layer_param);
   layer.SetUp(this->blob_bottom_vec_, this->blob_top_vec_);
   EXPECT_EQ(this->blob_top_->num(), this->blob_bottom_->num());
   EXPECT_EQ(this->blob_top_->channels(), this->blob_bottom_->channels());
@@ -50,7 +50,7 @@ TYPED_TEST(ThresholdLayerTest, TestSetup) {
 TYPED_TEST(ThresholdLayerTest, Test) {
   typedef typename TypeParam::Dtype Dtype;
   LayerParameter layer_param;
-  ThresholdLayer<Dtype> layer(layer_param);
+  ThresholdLayer<Dtype, Dtype> layer(layer_param);
   layer.SetUp(this->blob_bottom_vec_, this->blob_top_vec_);
   layer.Forward(this->blob_bottom_vec_, this->blob_top_vec_);
   // Now, check values
@@ -75,7 +75,7 @@ TYPED_TEST(ThresholdLayerTest, Test2) {
   ThresholdParameter* threshold_param =
     layer_param.mutable_threshold_param();
   threshold_param->set_threshold(0.5);
-  ThresholdLayer<Dtype> layer(layer_param);
+  ThresholdLayer<Dtype, Dtype> layer(layer_param);
   layer.SetUp(this->blob_bottom_vec_, this->blob_top_vec_);
   layer.Forward(this->blob_bottom_vec_, this->blob_top_vec_);
   // Now, check values

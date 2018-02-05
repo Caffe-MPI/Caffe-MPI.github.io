@@ -2,6 +2,15 @@ syntax = "proto2";
 
 package caffe;
 
+// Math and storage types
+enum Type {
+  DOUBLE = 0;
+  FLOAT = 1;
+  FLOAT16 = 2;
+  INT = 3;  // math not supported
+  UINT = 4;  // math not supported
+}
+
 // Specifies the shape (dimensions) of a Blob.
 message BlobShape {
   repeated int64 dim = 1 [packed = true];
@@ -13,7 +22,11 @@ message BlobProto {
   repeated float diff = 6 [packed = true];
   repeated double double_data = 8 [packed = true];
   repeated double double_diff = 9 [packed = true];
-
+  // New raw storage (faster and takes 1/2 of space for FP16)
+  optional Type raw_data_type = 10;
+  optional Type raw_diff_type = 11;
+  optional bytes raw_data = 12 [packed = false];
+  optional bytes raw_diff = 13 [packed = false];
   // 4D dimensions -- deprecated.  Use "shape" instead.
   optional int32 num = 1 [default = 0];
   optional int32 channels = 2 [default = 0];
@@ -38,10 +51,21 @@ message Datum {
   repeated float float_data = 6;
   // If true data contains an encoded image that need to be decoded
   optional bool encoded = 7 [default = false];
+  // Unique record index assigned by Reader
+  optional uint32 record_id = 8 [default = 0];
 }
 
 message FillerParameter {
-  // The filler type.
+  // The filler type. Can be one of the following:
+  // constant, gaussian, positive_unitball, uniform, xavier,
+  // msra, bilinear, or their static versions:
+  // gaussianstatic, positive_unitballstatic, uniformstatic, 
+  // xavierstatic, msrastatic, bilinearstatic
+  // In the static version the random number generator is only
+  // called once, and subsequent calls to fill blob, will write
+  // the same random numbers as in the first call. This is done
+  // to save time in cases where having same random numbers does
+  // not make a difference.
   optional string type = 1 [default = 'constant'];
   optional float value = 2 [default = 0]; // the value in constant filler
   optional float min = 3 [default = 0]; // the min value in uniform filler
@@ -63,6 +87,7 @@ message FillerParameter {
 
 message NetParameter {
   optional string name = 1; // consider giving the network a name
+  
   // DEPRECATED. See InputParameter. The input blobs to the network.
   repeated string input = 3;
   // DEPRECATED. See InputParameter. The shape of the input blobs.
@@ -93,12 +118,32 @@ message NetParameter {
 
   // DEPRECATED: use 'layer' instead.
   repeated V1LayerParameter layers = 2;
+
+  // Default types for all layers
+  // These work only when layer-specific ones are omitted
+  optional Type default_forward_type  = 11 [default = FLOAT];
+  optional Type default_backward_type = 12 [default = FLOAT];
+  optional Type default_forward_math  = 13 [default = FLOAT];
+  optional Type default_backward_math = 14 [default = FLOAT];
+  
+  
+  optional float global_grad_scale = 15 [default = 1.];
+
+
+  // Sets default "conv_algos_override" value for every convolution layer
+  optional string default_conv_algos_override = 17 [default = "-1,-1,-1"];
+
+  // While using multiple GPUs we have to run reduction process after every iteration.
+  // For better performance we unify multiple layers in buckets.
+  // This parameter sets approximate number of buckets to combine layers to.
+  // Default value is good for majority of nets.
+  optional int32 reduce_buckets = 18 [default = 6];
 }
 
 // NOTE
 // Update the next available ID when you add a new SolverParameter field.
 //
-// SolverParameter next available ID: 41 (last added: type)
+// SolverParameter next available ID: 49 (last added: momentum_power)
 message SolverParameter {
   //////////////////////////////////////////////////////////////////////////////
   // Specifying the train and test networks
@@ -144,7 +189,13 @@ message SolverParameter {
   // If true, run an initial test pass before the first iteration,
   // ensuring memory availability and printing the starting value of the loss.
   optional bool test_initialization = 32 [default = true];
+  
+  optional int32 rampup_interval = 41 [default = 0];
+  optional float rampup_lr = 42 [default = 0.];
+  optional float min_lr = 43 [default = 0.];
+  
   optional float base_lr = 5; // The base learning rate
+  
   // the number of iterations between displaying info. If display = 0, no info
   // will be displayed.
   optional int32 display = 6;
@@ -173,6 +224,11 @@ message SolverParameter {
   optional float gamma = 9; // The parameter to compute the learning rate.
   optional float power = 10; // The parameter to compute the learning rate.
   optional float momentum = 11; // The momentum value.
+    
+  optional string momentum_policy = 46 [default = "fixed"];  
+  optional float max_momentum     = 47 [default = 0.99];
+  optional float momentum_power   = 48 [default = 1.];
+    
   optional float weight_decay = 12; // The weight decay.
   // regularization types supported: L1 and L2
   // controlled by weight_decay
@@ -239,9 +295,8 @@ message SolverParameter {
   }
   // DEPRECATED: use type instead of solver_type
   optional SolverType solver_type = 30 [default = SGD];
-
-  optional int32 timeout_sec = 100 [default = 10];
-  optional int32 timeout_nsec = 101 [default = 0];
+  // Type used for storing weights and history
+  optional Type solver_data_type = 44 [default = FLOAT];
 }
 
 // A message that stores the solver snapshots
@@ -309,16 +364,28 @@ message ParamSpec {
 // NOTE
 // Update the next available ID when you add a new LayerParameter field.
 //
-// LayerParameter next available layer-specific ID: 147 (last added: recurrent_param)
+// LayerParameter next available layer-specific ID: 150 (last added: debug)
 message LayerParameter {
   optional string name = 1; // the layer name
   optional string type = 2; // the layer type
   repeated string bottom = 3; // the name of each bottom blob
   repeated string top = 4; // the name of each top blob
 
+  // Type returned by Forward routines of a particular layer (aka 'Ftype')
+  optional Type forward_type = 145 [default = FLOAT];
+  // Type returned by Backward routines of a particular layer (aka 'Btype')
+  optional Type backward_type = 146 [default = FLOAT];
+  // Internal math types. Works for those layers where internal math type 
+  // could be different compared to Ftype or Btype. For example, so called
+  // "pseudo fp32 mode" in convolution layers. For other layers has no meaning. 
+  optional Type forward_math = 147 [default = FLOAT];
+  optional Type backward_math = 148 [default = FLOAT];
+
+  optional bool debug = 149 [default = false];
+  
   // The train / test phase for computation.
   optional Phase phase = 10;
-
+  
   // The amount of weight to assign each top blob in the objective.
   // Each layer assigns a default value, usually of either 0 or 1,
   // to each top blob.
@@ -388,12 +455,10 @@ message LayerParameter {
   optional LRNParameter lrn_param = 118;
   optional MemoryDataParameter memory_data_param = 119;
   optional MVNParameter mvn_param = 120;
-  optional ParameterParameter parameter_param = 145;
   optional PoolingParameter pooling_param = 121;
   optional PowerParameter power_param = 122;
   optional PReLUParameter prelu_param = 131;
   optional PythonParameter python_param = 130;
-  optional RecurrentParameter recurrent_param = 146;
   optional ReductionParameter reduction_param = 136;
   optional ReLUParameter relu_param = 123;
   optional ReshapeParameter reshape_param = 133;
@@ -406,6 +471,10 @@ message LayerParameter {
   optional ThresholdParameter threshold_param = 128;
   optional TileParameter tile_param = 138;
   optional WindowDataParameter window_data_param = 129;
+
+  // NVIDIA PARAMETERS (Start with 68 because NV is 68 on an old-style phone)
+  optional DetectNetGroundTruthParameter detectnet_groundtruth_param = 6801;
+  optional DetectNetAugmentationParameter detectnet_augmentation_param = 6802;
 }
 
 // Message that stores parameters used to apply transformation
@@ -429,6 +498,87 @@ message TransformationParameter {
   optional bool force_color = 6 [default = false];
   // Force the decoded image to have 1 color channels.
   optional bool force_gray = 7 [default = false];
+  // Run the transform (synchronously) on the GPU
+  // False if omitted when Forward Type is float/double.
+  // True otherwise (float16 doesn't work well on CPU).
+  optional bool use_gpu_transform = 8 [default = false];
+  // If non-negative, the seed with which the transformer's
+  // random number generator would be initialized -- useful for reproducible results.
+  // Otherwise, (and by default) initialize using a seed derived from the system clock.
+  optional int64 random_seed = 9 [default = -1];
+}
+// Message that stores parameters used to create gridbox ground truth
+message DetectNetGroundTruthParameter {
+  // stride of gridbox with respect to image size
+  optional uint32 stride = 1 [default = 4];
+  // coverage region scale with respect to bounding box size
+  optional float scale_cvg = 2 [default = 0.5];
+  enum GridboxType {
+    GRIDBOX_MAX = 0;
+    GRIDBOX_MIN = 1;
+  }
+  // determines coverage region's maximum and minimum dimensions
+  optional GridboxType gridbox_type = 3 [default = GRIDBOX_MAX];
+  // if gridbox_type is equal to GRIDBOX_MAX, the maximum size a given coverage
+  //  region may take.
+  optional uint32 max_cvg_len = 4 [default = 50];
+  // if gridbox_type is equal to GRIDBOX_MIN, the minimum size a given coverage
+  //  region may take.
+  optional uint32 min_cvg_len = 5 [default = 50];
+  enum CoverageType {
+    RECTANGULAR = 0;
+  }
+  // shape of the coverage geometry.
+  optional CoverageType coverage_type = 7 [default = RECTANGULAR];
+  // Size that incoming images are cropped / scaled to during training / test
+  //  time. The network will only see images of this size.
+  optional uint32 image_size_x = 8 [default = 1248];
+  optional uint32 image_size_y = 9 [default = 384];
+  // coverage proportional to the size of the gridbox region overlapping the
+  // normalize object coverage by the size of the object
+  optional bool obj_norm = 11 [default = false];
+  // crop incoming bboxes such that their bounds remain inside the gridbox.
+  optional bool crop_bboxes = 12 [default = true];
+  // Integer and target index of classes to be included:
+  message ClassMapping {
+    required uint32 src = 1;
+    required uint32 dst = 2;
+  }
+  repeated ClassMapping object_class = 13;
+}
+
+// Message that stores parameters used to apply image and label augmentations
+// specific to NVDataLayer's online augmentation module
+message DetectNetAugmentationParameter {
+  // probability that a random crop of the training image will be taken at test
+  //  time. If image dimensions are less than input size and random cropping is
+  //  off, then the image will be scaled deterministically to the input size.
+  optional float crop_prob = 1 [default = 1.0];
+  // number of pixels to shift the image by. If cropping is enabled, this number
+  //  is added to the range of possible crop offset values.
+  optional uint32 shift_x = 2 [default = 0];
+  optional uint32 shift_y = 3 [default = 0];
+  // probability that the training image will be scaled at test time. 0 turns
+  //  scale augmentation off.
+  optional float scale_prob = 4 [default = 0.33];
+  // minimum and maximum scaling factor. 1.0 implies no scaling.
+  optional float scale_min = 5 [default = 0.7];
+  optional float scale_max = 6 [default = 1.0];
+  // probability that image will be flipped across the Y axis. 0 turns flip
+  //  augmentation off.
+  optional float flip_prob = 7 [default = 0.33];
+  // maximum angle in degrees (in both directions) image may be rotated. 0 turns
+  //  rotation augmentation off.
+  optional float rotation_prob = 8 [default = 0.33];
+  optional float max_rotate_degree = 9 [default = 1.0];
+  // maximum rotation of hue in degrees (in both directions). 0 turns hue
+  //  augmentation off.
+  optional float hue_rotation_prob = 10 [default = 0.33];
+  optional float hue_rotation = 11 [default = 15];
+  // maximum desaturation parameter. 1.0 may convert RGB to luminance. 0 turns
+  //  desaturation augmentation off.
+  optional float desaturation_prob = 12 [default = 0.33];
+  optional float desaturation_max = 13 [default = 0.5];
 }
 
 // Message that stores parameters shared by loss layers
@@ -504,12 +654,21 @@ message BatchNormParameter {
   // If false, accumulate global mean/variance values via a moving average. If
   // true, use those accumulated values instead of computing mean/variance
   // across the batch.
-  optional bool use_global_stats = 1;
+  optional bool use_global_stats = 1 [default = false];
   // How much does the moving average decay each iteration?
   optional float moving_average_fraction = 2 [default = .999];
   // Small value to add to the variance estimate so that we don't divide by
   // zero.
-  optional float eps = 3 [default = 1e-5];
+  optional float eps = 3 [default = 1e-4];
+  optional FillerParameter scale_filler = 5;
+  optional FillerParameter bias_filler = 6;
+  optional bool scale_bias = 7 [default = false];
+  enum Engine {
+    DEFAULT = 0;
+    CAFFE = 1;
+    CUDNN = 2;
+  }
+  optional Engine engine = 15 [default = DEFAULT];
 }
 
 message BiasParameter {
@@ -607,6 +766,23 @@ message ConvolutionParameter {
   // implementation; for input blobs with num_axes != 2, this option is
   // ignored and the ND implementation will be used.)
   optional bool force_nd_im2col = 17 [default = false];
+  enum CuDNNConvolutionAlgorithmSeeker {
+    GET = 0;
+    FINDEX = 1;
+  }
+  //Specifies which cudnn routine should be used to find the best convolution algorithm
+  optional CuDNNConvolutionAlgorithmSeeker cudnn_convolution_algo_seeker = 19 [default = FINDEX];
+  //optional CuDNNConvolutionAlgorithmSeeker cudnn_convolution_algo_seeker = 19 [default = GET];
+
+  // If set to non-negative value, enforces using the algo by the index provided.
+  // It has priority over CuDNNConvolutionAlgorithmSeeker and essentially disables seeking.
+  // The index should correspond the ordinal in structures cudnnConvolutionFwdAlgo_t,
+  // cudnnConvolutionBwdDataAlgo_t and cudnnConvolutionBwdFilterAlgo_t.
+  // For example, conv_algos_override set to "7,5,7" means using CUDNN_CONVOLUTION_FWD_ALGO_WINOGRAD_NONFUSED,
+  // CUDNN_CONVOLUTION_BWD_DATA_ALGO_WINOGRAD_NONFUSED and CUDNN_CONVOLUTION_BWD_FILTER_ALGO_WINOGRAD_NONFUSED
+  // correspondingly.
+  optional string conv_algos_override = 20 [default = "-1,-1,-1"];
+  //optional string conv_algos_override = 20 [default = "6,-1,-1"];
 }
 
 message CropParameter {
@@ -656,13 +832,31 @@ message DataParameter {
   optional bool mirror = 6 [default = false];
   // Force the encoded image to have 3 color channels
   optional bool force_encoded_color = 9 [default = false];
-  // Prefetch queue (Number of batches to prefetch to host memory, increase if
-  // data access bandwidth varies).
-  optional uint32 prefetch = 10 [default = 4];
+  // Deprecated
+  optional uint32 prefetch = 10 [default = 0];
+  // Number of Data Transformer threads per GPU. If 0 Caffe optimizes it automatically.
+  // Takes effect only when used together with 'parser_threads' setting.
+  // Ignored and always set to 1 for test nets.
+  optional uint32 threads  = 11 [default = 0];
+  // Number of Parser threads per GPU. If 0 Caffe optimizes it automatically.
+  // Takes effect only when used together with 'threads' setting.
+  // Ignored and always set to 1 for test nets.
+  optional uint32 parser_threads  = 12 [default = 0];
+  // Cache observations while reading
+  optional bool cache = 13 [default = false];
+  // Shuffle observations while reading for better accuracy. Ignored if 'cache' is false.
+  optional bool shuffle = 14 [default = false];
 }
 
 message DropoutParameter {
   optional float dropout_ratio = 1 [default = 0.5]; // dropout ratio
+  enum Engine {
+    DEFAULT = 0;
+    CAFFE = 1;
+    CUDNN = 2;
+  }
+  optional Engine engine = 2 [default = DEFAULT];
+  optional int64 random_seed = 3 [default = -1];
 }
 
 // DummyDataLayer fills any number of arbitrarily shaped blobs with random
@@ -878,10 +1072,6 @@ message MVNParameter {
   optional float eps = 3 [default = 1e-9];
 }
 
-message ParameterParameter {
-  optional BlobShape shape = 1;
-}
-
 message PoolingParameter {
   enum PoolMethod {
     MAX = 0;
@@ -930,25 +1120,6 @@ message PythonParameter {
   // If true, each worker solver sequentially run forward from this layer.
   // This value should be set true if you are using it as a data layer.
   optional bool share_in_parallel = 4 [default = false];
-}
-
-// Message that stores parameters used by RecurrentLayer
-message RecurrentParameter {
-  // The dimension of the output (and usually hidden state) representation --
-  // must be explicitly set to non-zero.
-  optional uint32 num_output = 1 [default = 0];
-
-  optional FillerParameter weight_filler = 2; // The filler for the weight
-  optional FillerParameter bias_filler = 3; // The filler for the bias
-
-  // Whether to enable displaying debug_info in the unrolled recurrent net.
-  optional bool debug_info = 4 [default = false];
-
-  // Whether to add as additional inputs (bottoms) the initial hidden state
-  // blobs, and add as additional outputs (tops) the final timestep hidden state
-  // blobs.  The number of additional bottom/top blobs required depends on the
-  // recurrent architecture -- e.g., 1 for RNNs, 2 for LSTMs.
-  optional bool expose_hidden = 5 [default = false];
 }
 
 // Message that stores parameters used by ReductionLayer

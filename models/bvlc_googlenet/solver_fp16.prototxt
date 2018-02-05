@@ -1,0 +1,36 @@
+net: "models/bvlc_googlenet/train_val_fp16.prototxt"
+
+test_iter: 1562		# 50000/32
+test_interval: 20000	
+test_initialization: false
+
+display:  100
+
+max_iter: 1200000         # 60 epochs B=64
+base_lr:  0.01
+
+# DGX1 =====================================
+# max_iter: 300000        # 60 epochs B=256
+# base_lr:  0.02
+# DGX1 =====================================
+
+lr_policy: "poly"
+power: 2
+momentum: 0.9
+weight_decay: 0.0002
+
+snapshot: 1200000
+snapshot_prefix: "models/bvlc_googlenet/snapshots/bvlc_googlenet_fp16"
+snapshot_after_train: true
+
+solver_mode: GPU
+random_seed: 1
+
+# Train dataset size = 1,281,167
+# Test dataset size  =    50,000
+
+# batch 64  --> epoch = 20,000
+# batch 96  --> epoch = 15,000
+# batch 128 --> epoch = 10,000  
+# batch 256 --> epoch =  5,000  
+# batch 512 --> epoch =  2,500 

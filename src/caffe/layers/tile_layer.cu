@@ -18,15 +18,15 @@ __global__ void Tile(const int nthreads, const Dtype* bottom_data,
   }
 }
 
-template <typename Dtype>
-void TileLayer<Dtype>::Forward_gpu(
-    const vector<Blob<Dtype>*>& bottom, const vector<Blob<Dtype>*>& top) {
-  const Dtype* bottom_data = bottom[0]->gpu_data();
-  Dtype* top_data = top[0]->mutable_gpu_data();
+template <typename Ftype, typename Btype>
+void TileLayer<Ftype, Btype>::Forward_gpu(
+    const vector<Blob*>& bottom, const vector<Blob*>& top) {
+  const Ftype* bottom_data = bottom[0]->gpu_data<Ftype>();
+  Ftype* top_data = top[0]->mutable_gpu_data<Ftype>();
   const int bottom_tile_axis = bottom[0]->shape(axis_);
   const int nthreads = top[0]->count();
-  Tile<Dtype>  // NOLINT_NEXT_LINE(whitespace/operators)
-      <<<CAFFE_GET_BLOCKS(nthreads), CAFFE_CUDA_NUM_THREADS>>>(
+  Tile  // NOLINT_NEXT_LINE(whitespace/operators)
+      <<<CAFFE_GET_BLOCKS(nthreads), CAFFE_CUDA_NUM_THREADS, 0, Caffe::thread_stream()>>>(
       nthreads, bottom_data, inner_dim_, tiles_, bottom_tile_axis, top_data);
 }
 
@@ -47,20 +47,20 @@ __global__ void TileBackward(const int nthreads, const Dtype* top_diff,
   }
 }
 
-template <typename Dtype>
-void TileLayer<Dtype>::Backward_gpu(const vector<Blob<Dtype>*>& top,
-    const vector<bool>& propagate_down, const vector<Blob<Dtype>*>& bottom) {
+template <typename Ftype, typename Btype>
+void TileLayer<Ftype, Btype>::Backward_gpu(const vector<Blob*>& top,
+    const vector<bool>& propagate_down, const vector<Blob*>& bottom) {
   if (!propagate_down[0]) { return; }
-  const Dtype* top_diff = top[0]->gpu_diff();
-  Dtype* bottom_diff = bottom[0]->mutable_gpu_diff();
+  const Btype* top_diff = top[0]->gpu_diff<Btype>();
+  Btype* bottom_diff = bottom[0]->mutable_gpu_diff<Btype>();
   const int bottom_tile_axis = bottom[0]->shape(axis_);
   const int tile_size = inner_dim_ / bottom_tile_axis;
   const int nthreads = bottom[0]->count();
-  TileBackward<Dtype>  // NOLINT_NEXT_LINE(whitespace/operators)
-      <<<CAFFE_GET_BLOCKS(nthreads), CAFFE_CUDA_NUM_THREADS>>>(
+  TileBackward  // NOLINT_NEXT_LINE(whitespace/operators)
+      <<<CAFFE_GET_BLOCKS(nthreads), CAFFE_CUDA_NUM_THREADS, 0, Caffe::thread_stream()>>>(
       nthreads, top_diff, tile_size, tiles_, bottom_tile_axis, bottom_diff);
 }
 
-INSTANTIATE_LAYER_GPU_FUNCS(TileLayer);
+INSTANTIATE_LAYER_GPU_FUNCS_FB(TileLayer);
 
 }  // namespace caffe

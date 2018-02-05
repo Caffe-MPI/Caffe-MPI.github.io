@@ -9,88 +9,95 @@
 namespace caffe {
 
 template<typename T>
-class BlockingQueue<T>::sync {
- public:
-  mutable boost::mutex mutex_;
-  boost::condition_variable condition_;
-};
+BlockingQueue<T>::BlockingQueue() {}
 
 template<typename T>
-BlockingQueue<T>::BlockingQueue()
-    : sync_(new sync()) {
-}
+BlockingQueue<T>::~BlockingQueue() {}
 
 template<typename T>
 void BlockingQueue<T>::push(const T& t) {
-  boost::mutex::scoped_lock lock(sync_->mutex_);
+  boost::mutex::scoped_lock lock(mutex_);
   queue_.push(t);
   lock.unlock();
-  sync_->condition_.notify_one();
+  condition_.notify_one();
 }
 
 template<typename T>
 bool BlockingQueue<T>::try_pop(T* t) {
-  boost::mutex::scoped_lock lock(sync_->mutex_);
-
+  boost::mutex::scoped_lock lock(mutex_);
   if (queue_.empty()) {
     return false;
   }
-
   *t = queue_.front();
   queue_.pop();
   return true;
 }
 
 template<typename T>
-T BlockingQueue<T>::pop(const string& log_on_wait) {
-  boost::mutex::scoped_lock lock(sync_->mutex_);
-
+T BlockingQueue<T>::pop(const char* log_on_wait) {
+  boost::mutex::scoped_lock lock(mutex_);
   while (queue_.empty()) {
-    if (!log_on_wait.empty()) {
-      LOG_EVERY_N(INFO, 1000)<< log_on_wait;
-    }
-    sync_->condition_.wait(lock);
+    LOG_EVERY_N(INFO, 10000) << log_on_wait;
+    condition_.wait(lock);
   }
-
   T t = queue_.front();
   queue_.pop();
   return t;
 }
 
 template<typename T>
-bool BlockingQueue<T>::try_peek(T* t) {
-  boost::mutex::scoped_lock lock(sync_->mutex_);
+T BlockingQueue<T>::pop() {
+  boost::mutex::scoped_lock lock(mutex_);
+  while (queue_.empty()) {
+    condition_.wait(lock);
+  }
+  T t(queue_.front());
+  queue_.pop();
+  return t;
+}
 
+template<typename T>
+bool BlockingQueue<T>::try_peek(T* t) {
+  boost::mutex::scoped_lock lock(mutex_);
   if (queue_.empty()) {
     return false;
   }
-
   *t = queue_.front();
   return true;
 }
 
 template<typename T>
 T BlockingQueue<T>::peek() {
-  boost::mutex::scoped_lock lock(sync_->mutex_);
-
+  boost::mutex::scoped_lock lock(mutex_);
   while (queue_.empty()) {
-    sync_->condition_.wait(lock);
+    condition_.wait(lock);
   }
-
   return queue_.front();
 }
 
 template<typename T>
 size_t BlockingQueue<T>::size() const {
-  boost::mutex::scoped_lock lock(sync_->mutex_);
+  boost::mutex::scoped_lock lock(mutex_);
   return queue_.size();
 }
 
-template class BlockingQueue<Batch<float>*>;
-template class BlockingQueue<Batch<double>*>;
-template class BlockingQueue<Datum*>;
-template class BlockingQueue<shared_ptr<DataReader::QueuePair> >;
-template class BlockingQueue<P2PSync<float>*>;
-template class BlockingQueue<P2PSync<double>*>;
+template<typename T>
+bool BlockingQueue<T>::nonblocking_size(size_t* size) const {
+  boost::mutex::scoped_lock lock(mutex_, boost::try_to_lock);
+  if (lock.owns_lock()) {
+    *size = queue_.size();
+    return true;
+  }
+  return false;
+}
+
+template class BlockingQueue<int>;
+template class BlockingQueue<shared_ptr<Batch<float>>>;
+template class BlockingQueue<shared_ptr<Batch<double>>>;
+#ifndef CPU_ONLY
+template class BlockingQueue<shared_ptr<Batch<float16>>>;
+#endif
+template class BlockingQueue<shared_ptr<Datum>>;
+template class BlockingQueue<P2PSync*>;
 
 }  // namespace caffe

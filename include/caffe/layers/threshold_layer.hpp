@@ -15,8 +15,8 @@ namespace caffe {
  * @brief Tests whether the input exceeds a threshold: outputs 1 for inputs
  *        above threshold; 0 otherwise.
  */
-template <typename Dtype>
-class ThresholdLayer : public NeuronLayer<Dtype> {
+template <typename Ftype, typename Btype>
+class ThresholdLayer : public NeuronLayer<Ftype, Btype> {
  public:
   /**
    * @param param provides ThresholdParameter threshold_param,
@@ -25,9 +25,9 @@ class ThresholdLayer : public NeuronLayer<Dtype> {
    *     the threshold value @f$ t @f$ to which the input values are compared.
    */
   explicit ThresholdLayer(const LayerParameter& param)
-      : NeuronLayer<Dtype>(param) {}
-  virtual void LayerSetUp(const vector<Blob<Dtype>*>& bottom,
-      const vector<Blob<Dtype>*>& top);
+      : NeuronLayer<Ftype, Btype>(param) {}
+  virtual void LayerSetUp(const vector<Blob*>& bottom,
+      const vector<Blob*>& top);
 
   virtual inline const char* type() const { return "Threshold"; }
 
@@ -46,17 +46,17 @@ class ThresholdLayer : public NeuronLayer<Dtype> {
    *       \end{array} \right.
    *      @f$
    */
-  virtual void Forward_cpu(const vector<Blob<Dtype>*>& bottom,
-      const vector<Blob<Dtype>*>& top);
-  virtual void Forward_gpu(const vector<Blob<Dtype>*>& bottom,
-      const vector<Blob<Dtype>*>& top);
+  virtual void Forward_cpu(const vector<Blob*>& bottom,
+      const vector<Blob*>& top);
+  virtual void Forward_gpu(const vector<Blob*>& bottom,
+      const vector<Blob*>& top);
   /// @brief Not implemented (non-differentiable function)
-  virtual void Backward_cpu(const vector<Blob<Dtype>*>& top,
-      const vector<bool>& propagate_down, const vector<Blob<Dtype>*>& bottom) {
+  virtual void Backward_cpu(const vector<Blob*>& top,
+      const vector<bool>& propagate_down, const vector<Blob*>& bottom) {
     NOT_IMPLEMENTED;
   }
 
-  Dtype threshold_;
+  float threshold_;
 };
 
 }  // namespace caffe

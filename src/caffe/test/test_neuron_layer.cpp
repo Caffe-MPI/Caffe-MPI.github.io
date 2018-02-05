@@ -1,7 +1,7 @@
 #include <algorithm>
 #include <vector>
 
-#include "google/protobuf/text_format.h"
+#include <google/protobuf/text_format.h>
 #include "gtest/gtest.h"
 
 #include "caffe/blob.hpp"
@@ -23,9 +23,12 @@
 #include "caffe/layers/threshold_layer.hpp"
 
 #ifdef USE_CUDNN
+
 #include "caffe/layers/cudnn_relu_layer.hpp"
 #include "caffe/layers/cudnn_sigmoid_layer.hpp"
 #include "caffe/layers/cudnn_tanh_layer.hpp"
+#include "caffe/layers/cudnn_dropout_layer.hpp"
+
 #endif
 
 #include "caffe/test/test_caffe_main.hpp"
@@ -33,14 +36,12 @@
 
 namespace caffe {
 
-template <typename TypeParam>
+template<typename TypeParam>
 class NeuronLayerTest : public MultiDeviceTest<TypeParam> {
   typedef typename TypeParam::Dtype Dtype;
 
  protected:
-  NeuronLayerTest()
-      : blob_bottom_(new Blob<Dtype>(2, 3, 4, 5)),
-        blob_top_(new Blob<Dtype>()) {
+  NeuronLayerTest() : blob_bottom_(new TBlob<Dtype>(2, 3, 4, 5)), blob_top_(new TBlob<Dtype>()) {
     Caffe::set_random_seed(1701);
     // fill the values
     FillerParameter filler_param;
@@ -49,11 +50,16 @@ class NeuronLayerTest : public MultiDeviceTest<TypeParam> {
     blob_bottom_vec_.push_back(blob_bottom_);
     blob_top_vec_.push_back(blob_top_);
   }
-  virtual ~NeuronLayerTest() { delete blob_bottom_; delete blob_top_; }
-  Blob<Dtype>* const blob_bottom_;
-  Blob<Dtype>* const blob_top_;
-  vector<Blob<Dtype>*> blob_bottom_vec_;
-  vector<Blob<Dtype>*> blob_top_vec_;
+
+  virtual ~NeuronLayerTest() {
+    delete blob_bottom_;
+    delete blob_top_;
+  }
+
+  TBlob<Dtype>* const blob_bottom_;
+  TBlob<Dtype>* const blob_top_;
+  vector<Blob*> blob_bottom_vec_;
+  vector<Blob*> blob_top_vec_;
 
   void TestDropoutForward(const float dropout_ratio) {
     LayerParameter layer_param;
@@ -62,7 +68,7 @@ class NeuronLayerTest : public MultiDeviceTest<TypeParam> {
     if (dropout_ratio != 0.5) {
       layer_param.mutable_dropout_param()->set_dropout_ratio(dropout_ratio);
     }
-    DropoutLayer<Dtype> layer(layer_param);
+    DropoutLayer<Dtype, Dtype> layer(layer_param);
     layer_param.set_phase(TRAIN);
     layer.SetUp(this->blob_bottom_vec_, this->blob_top_vec_);
     layer.Forward(this->blob_bottom_vec_, this->blob_top_vec_);
@@ -76,14 +82,15 @@ class NeuronLayerTest : public MultiDeviceTest<TypeParam> {
     for (int i = 0; i < count; ++i) {
       if (top_data[i] != 0) {
         ++num_kept;
-        EXPECT_EQ(top_data[i], bottom_data[i] * scale);
+        EXPECT_FLOAT_EQ(static_cast<float>(top_data[i]),
+            static_cast<float>(bottom_data[i] * scale));
       }
     }
-    const Dtype std_error = sqrt(dropout_ratio * (1 - dropout_ratio) / count);
+    const Dtype std_error = sqrt(dropout_ratio * (1. - dropout_ratio) / count);
     // Fail if the number dropped was more than 1.96 * std_error away from the
     // expected number -- requires 95% confidence that the dropout layer is not
     // obeying the given dropout_ratio for test failure.
-    const Dtype empirical_dropout_ratio = 1 - num_kept / Dtype(count);
+    const Dtype empirical_dropout_ratio = 1. - num_kept / Dtype(count);
     EXPECT_NEAR(empirical_dropout_ratio, dropout_ratio, 1.96 * std_error);
   }
 
@@ -92,10 +99,10 @@ class NeuronLayerTest : public MultiDeviceTest<TypeParam> {
     layer_param.mutable_exp_param()->set_base(base);
     layer_param.mutable_exp_param()->set_scale(scale);
     layer_param.mutable_exp_param()->set_shift(shift);
-    ExpLayer<Dtype> layer(layer_param);
+    ExpLayer<Dtype, Dtype> layer(layer_param);
     layer.SetUp(blob_bottom_vec_, blob_top_vec_);
     layer.Forward(blob_bottom_vec_, blob_top_vec_);
-    const Dtype kDelta = 2e-4;
+    const Dtype kDelta = tol<Dtype>(2e-4, 2.e-2);
     const Dtype* bottom_data = blob_bottom_->cpu_data();
     const Dtype* top_data = blob_top_->cpu_data();
     for (int i = 0; i < blob_bottom_->count(); ++i) {
@@ -104,7 +111,8 @@ class NeuronLayerTest : public MultiDeviceTest<TypeParam> {
       if (base == -1) {
         EXPECT_NEAR(top_val, exp(shift + scale * bottom_val), kDelta);
       } else {
-        EXPECT_NEAR(top_val, pow(base, shift + scale * bottom_val), kDelta);
+        EXPECT_NEAR(top_val, pow(base, shift + scale * bottom_val),
+            tol<Dtype>(kDelta, kDelta * top_val));
       }
     }
   }
@@ -114,25 +122,25 @@ class NeuronLayerTest : public MultiDeviceTest<TypeParam> {
     layer_param.mutable_exp_param()->set_base(base);
     layer_param.mutable_exp_param()->set_scale(scale);
     layer_param.mutable_exp_param()->set_shift(shift);
-    ExpLayer<Dtype> layer(layer_param);
-    GradientChecker<Dtype> checker(1e-2, 1e-3);
+    ExpLayer<Dtype, Dtype> layer(layer_param);
+    GradientChecker<Dtype> checker(tol<Dtype>(1e-2, 1e-1), tol<Dtype>(1e-3, 1e-1));
     checker.CheckGradientEltwise(&layer, blob_bottom_vec_, blob_top_vec_);
   }
 
-  void TestPReLU(PReLULayer<Dtype> *layer) {
+  void TestPReLU(PReLULayer<Dtype, Dtype>* layer) {
     layer->Forward(this->blob_bottom_vec_, this->blob_top_vec_);
-  // Now, check values
+    // Now, check values
     const Dtype* bottom_data = this->blob_bottom_->cpu_data();
     const Dtype* top_data = this->blob_top_->cpu_data();
-    const Dtype* slope_data = layer->blobs()[0]->cpu_data();
+    const Dtype* slope_data = layer->blobs()[0]->template cpu_data<Dtype>();
     int hw = this->blob_bottom_->height() * this->blob_bottom_->width();
     int channels = this->blob_bottom_->channels();
     bool channel_shared = layer->layer_param().prelu_param().channel_shared();
     for (int i = 0; i < this->blob_bottom_->count(); ++i) {
       int c = channel_shared ? 0 : (i / hw) % channels;
-      EXPECT_EQ(top_data[i],
-          std::max(bottom_data[i], (Dtype)(0))
-          + slope_data[c] * std::min(bottom_data[i], (Dtype)(0)));
+      EXPECT_NEAR(top_data[i], std::max(bottom_data[i], TypedConsts<Dtype>::zero) +
+                               slope_data[c] * std::min(bottom_data[i], TypedConsts<Dtype>::zero),
+          tol<Dtype>(1e-6, 2e-3));
     }
   }
 
@@ -150,10 +158,10 @@ class NeuronLayerTest : public MultiDeviceTest<TypeParam> {
     layer_param.mutable_log_param()->set_base(base);
     layer_param.mutable_log_param()->set_scale(scale);
     layer_param.mutable_log_param()->set_shift(shift);
-    LogLayer<Dtype> layer(layer_param);
+    LogLayer<Dtype, Dtype> layer(layer_param);
     layer.SetUp(blob_bottom_vec_, blob_top_vec_);
     layer.Forward(blob_bottom_vec_, blob_top_vec_);
-    const Dtype kDelta = 2e-4;
+    const Dtype kDelta = tol<Dtype>(2e-4, 1.e-2);
     const Dtype* bottom_data = blob_bottom_->cpu_data();
     const Dtype* top_data = blob_top_->cpu_data();
     for (int i = 0; i < blob_bottom_->count(); ++i) {
@@ -162,8 +170,7 @@ class NeuronLayerTest : public MultiDeviceTest<TypeParam> {
       if (base == -1) {
         EXPECT_NEAR(top_val, log(shift + scale * bottom_val), kDelta);
       } else {
-        EXPECT_NEAR(top_val, log(shift + scale * bottom_val) / log(base),
-                    kDelta);
+        EXPECT_NEAR(top_val, log(shift + scale * bottom_val) / log(base), kDelta);
       }
     }
   }
@@ -174,8 +181,8 @@ class NeuronLayerTest : public MultiDeviceTest<TypeParam> {
     layer_param.mutable_log_param()->set_base(base);
     layer_param.mutable_log_param()->set_scale(scale);
     layer_param.mutable_log_param()->set_shift(shift);
-    LogLayer<Dtype> layer(layer_param);
-    GradientChecker<Dtype> checker(1e-2, 1e-2);
+    LogLayer<Dtype, Dtype> layer(layer_param);
+    GradientChecker<Dtype> checker(tol<Dtype>(1e-2, 2e-2), tol<Dtype>(1e-2, 5e-1));
     checker.CheckGradientEltwise(&layer, blob_bottom_vec_, blob_top_vec_);
   }
 };
@@ -185,11 +192,11 @@ TYPED_TEST_CASE(NeuronLayerTest, TestDtypesAndDevices);
 TYPED_TEST(NeuronLayerTest, TestAbsVal) {
   typedef typename TypeParam::Dtype Dtype;
   LayerParameter layer_param;
-  AbsValLayer<Dtype> layer(layer_param);
+  AbsValLayer<Dtype, Dtype> layer(layer_param);
   layer.SetUp(this->blob_bottom_vec_, this->blob_top_vec_);
   layer.Forward(this->blob_bottom_vec_, this->blob_top_vec_);
   const Dtype* bottom_data = this->blob_bottom_->cpu_data();
-  const Dtype* top_data    = this->blob_top_->cpu_data();
+  const Dtype* top_data = this->blob_top_->cpu_data();
   const int count = this->blob_bottom_->count();
   for (int i = 0; i < count; ++i) {
     EXPECT_EQ(top_data[i], fabs(bottom_data[i]));
@@ -199,16 +206,15 @@ TYPED_TEST(NeuronLayerTest, TestAbsVal) {
 TYPED_TEST(NeuronLayerTest, TestAbsGradient) {
   typedef typename TypeParam::Dtype Dtype;
   LayerParameter layer_param;
-  AbsValLayer<Dtype> layer(layer_param);
-  GradientChecker<Dtype> checker(1e-2, 1e-3, 1701, 0., 0.01);
-  checker.CheckGradientEltwise(&layer, this->blob_bottom_vec_,
-      this->blob_top_vec_);
+  AbsValLayer<Dtype, Dtype> layer(layer_param);
+  GradientChecker<Dtype> checker(tol<Dtype>(1e-2, 1e-2), tol<Dtype>(1e-3, 1e-1), 1701, 0., 0.01);
+  checker.CheckGradientEltwise(&layer, this->blob_bottom_vec_, this->blob_top_vec_);
 }
 
 TYPED_TEST(NeuronLayerTest, TestReLU) {
   typedef typename TypeParam::Dtype Dtype;
   LayerParameter layer_param;
-  ReLULayer<Dtype> layer(layer_param);
+  ReLULayer<Dtype, Dtype> layer(layer_param);
   layer.SetUp(this->blob_bottom_vec_, this->blob_top_vec_);
   layer.Forward(this->blob_bottom_vec_, this->blob_top_vec_);
   // Now, check values
@@ -223,18 +229,17 @@ TYPED_TEST(NeuronLayerTest, TestReLU) {
 TYPED_TEST(NeuronLayerTest, TestReLUGradient) {
   typedef typename TypeParam::Dtype Dtype;
   LayerParameter layer_param;
-  ReLULayer<Dtype> layer(layer_param);
-  GradientChecker<Dtype> checker(1e-2, 1e-3, 1701, 0., 0.01);
-  checker.CheckGradientEltwise(&layer, this->blob_bottom_vec_,
-      this->blob_top_vec_);
+  ReLULayer<Dtype, Dtype> layer(layer_param);
+  GradientChecker<Dtype> checker(tol<Dtype>(1e-2, 1e-2), tol<Dtype>(1e-3, 1e-1), 1701, 0., 0.01);
+  checker.CheckGradientEltwise(&layer, this->blob_bottom_vec_, this->blob_top_vec_);
 }
 
 TYPED_TEST(NeuronLayerTest, TestReLUWithNegativeSlope) {
   typedef typename TypeParam::Dtype Dtype;
   LayerParameter layer_param;
-  CHECK(google::protobuf::TextFormat::ParseFromString(
-      "relu_param { negative_slope: 0.01 }", &layer_param));
-  ReLULayer<Dtype> layer(layer_param);
+  CHECK(google::protobuf::TextFormat::ParseFromString("relu_param { negative_slope: 0.01 }",
+      &layer_param));
+  ReLULayer<Dtype, Dtype> layer(layer_param);
   layer.SetUp(this->blob_bottom_vec_, this->blob_top_vec_);
   layer.Forward(this->blob_bottom_vec_, this->blob_top_vec_);
   // Now, check values
@@ -244,7 +249,7 @@ TYPED_TEST(NeuronLayerTest, TestReLUWithNegativeSlope) {
     if (top_data[i] >= 0) {
       EXPECT_FLOAT_EQ(top_data[i], bottom_data[i]);
     } else {
-      EXPECT_FLOAT_EQ(top_data[i], bottom_data[i] * 0.01);
+      EXPECT_NEAR(top_data[i], bottom_data[i] * 0.01, tol<Dtype>(1e-6, 1e-2));
     }
   }
 }
@@ -252,20 +257,18 @@ TYPED_TEST(NeuronLayerTest, TestReLUWithNegativeSlope) {
 TYPED_TEST(NeuronLayerTest, TestReLUGradientWithNegativeSlope) {
   typedef typename TypeParam::Dtype Dtype;
   LayerParameter layer_param;
-  CHECK(google::protobuf::TextFormat::ParseFromString(
-      "relu_param { negative_slope: 0.01 }", &layer_param));
-  ReLULayer<Dtype> layer(layer_param);
-  GradientChecker<Dtype> checker(1e-2, 1e-3, 1701, 0., 0.01);
-  checker.CheckGradientEltwise(&layer, this->blob_bottom_vec_,
-      this->blob_top_vec_);
+  CHECK(google::protobuf::TextFormat::ParseFromString("relu_param { negative_slope: 0.01 }",
+      &layer_param));
+  ReLULayer<Dtype, Dtype> layer(layer_param);
+  GradientChecker<Dtype> checker(tol<Dtype>(1e-2, 1e-2), tol<Dtype>(1e-3, 1e-1), 1701, 0., 0.01);
+  checker.CheckGradientEltwise(&layer, this->blob_bottom_vec_, this->blob_top_vec_);
 }
 
 TYPED_TEST(NeuronLayerTest, TestELU) {
   typedef typename TypeParam::Dtype Dtype;
   LayerParameter layer_param;
-  CHECK(google::protobuf::TextFormat::ParseFromString(
-      "elu_param { alpha: 0.5 }", &layer_param));
-  ELULayer<Dtype> layer(layer_param);
+  CHECK(google::protobuf::TextFormat::ParseFromString("elu_param { alpha: 0.5 }", &layer_param));
+  ELULayer<Dtype, Dtype> layer(layer_param);
   layer.SetUp(this->blob_bottom_vec_, this->blob_top_vec_);
   layer.Forward(this->blob_bottom_vec_, this->blob_top_vec_);
   const Dtype kDelta = 2e-4;
@@ -284,9 +287,8 @@ TYPED_TEST(NeuronLayerTest, TestELU) {
 TYPED_TEST(NeuronLayerTest, TestELUasReLU) {
   typedef typename TypeParam::Dtype Dtype;
   LayerParameter layer_param;
-  CHECK(google::protobuf::TextFormat::ParseFromString(
-      "elu_param { alpha: 0 }", &layer_param));
-  ELULayer<Dtype> layer(layer_param);
+  CHECK(google::protobuf::TextFormat::ParseFromString("elu_param { alpha: 0 }", &layer_param));
+  ELULayer<Dtype, Dtype> layer(layer_param);
   layer.SetUp(this->blob_bottom_vec_, this->blob_top_vec_);
   layer.Forward(this->blob_bottom_vec_, this->blob_top_vec_);
   // Now, check values
@@ -301,34 +303,31 @@ TYPED_TEST(NeuronLayerTest, TestELUasReLU) {
 TYPED_TEST(NeuronLayerTest, TestELUGradient) {
   typedef typename TypeParam::Dtype Dtype;
   LayerParameter layer_param;
-  ELULayer<Dtype> layer(layer_param);
-  GradientChecker<Dtype> checker(1e-2, 1e-3, 1701, 0., 0.01);
-  checker.CheckGradientEltwise(&layer, this->blob_bottom_vec_,
-      this->blob_top_vec_);
+  ELULayer<Dtype, Dtype> layer(layer_param);
+  GradientChecker<Dtype> checker(tol<Dtype>(1e-2, 1e-2), tol<Dtype>(1e-3, 1e-1), 1701, 0., 0.01);
+  checker.CheckGradientEltwise(&layer, this->blob_bottom_vec_, this->blob_top_vec_);
 }
 
 TYPED_TEST(NeuronLayerTest, TestELUasReLUGradient) {
   typedef typename TypeParam::Dtype Dtype;
   LayerParameter layer_param;
-  CHECK(google::protobuf::TextFormat::ParseFromString(
-      "elu_param { alpha: 0 }", &layer_param));
-  ELULayer<Dtype> layer(layer_param);
-  GradientChecker<Dtype> checker(1e-2, 1e-3, 1701, 0., 0.01);
-  checker.CheckGradientEltwise(&layer, this->blob_bottom_vec_,
-      this->blob_top_vec_);
+  CHECK(google::protobuf::TextFormat::ParseFromString("elu_param { alpha: 0 }", &layer_param));
+  ELULayer<Dtype, Dtype> layer(layer_param);
+  GradientChecker<Dtype> checker(tol<Dtype>(1e-2, 1e-2), tol<Dtype>(1e-3, 1e-1), 1701, 0., 0.01);
+  checker.CheckGradientEltwise(&layer, this->blob_bottom_vec_, this->blob_top_vec_);
 }
 
 TYPED_TEST(NeuronLayerTest, TestSigmoid) {
   typedef typename TypeParam::Dtype Dtype;
   LayerParameter layer_param;
-  SigmoidLayer<Dtype> layer(layer_param);
+  SigmoidLayer<Dtype, Dtype> layer(layer_param);
   layer.SetUp(this->blob_bottom_vec_, this->blob_top_vec_);
   layer.Forward(this->blob_bottom_vec_, this->blob_top_vec_);
   // Now, check values
   const Dtype* bottom_data = this->blob_bottom_->cpu_data();
   const Dtype* top_data = this->blob_top_->cpu_data();
   for (int i = 0; i < this->blob_bottom_->count(); ++i) {
-    EXPECT_FLOAT_EQ(top_data[i], 1. / (1 + exp(-bottom_data[i])));
+    EXPECT_NEAR(top_data[i], 1. / (1. + exp(-bottom_data[i])), tol<Dtype>(1e-6, 1e-3));
     // check that we squashed the value between 0 and 1
     EXPECT_GE(top_data[i], 0.);
     EXPECT_LE(top_data[i], 1.);
@@ -338,16 +337,15 @@ TYPED_TEST(NeuronLayerTest, TestSigmoid) {
 TYPED_TEST(NeuronLayerTest, TestSigmoidGradient) {
   typedef typename TypeParam::Dtype Dtype;
   LayerParameter layer_param;
-  SigmoidLayer<Dtype> layer(layer_param);
-  GradientChecker<Dtype> checker(1e-2, 1e-3, 1701, 0., 0.01);
-  checker.CheckGradientEltwise(&layer, this->blob_bottom_vec_,
-      this->blob_top_vec_);
+  SigmoidLayer<Dtype, Dtype> layer(layer_param);
+  GradientChecker<Dtype> checker(tol<Dtype>(1e-2, 1e-1), tol<Dtype>(1e-3, 1e-1), 1701, 0., 0.01);
+  checker.CheckGradientEltwise(&layer, this->blob_bottom_vec_, this->blob_top_vec_);
 }
 
 TYPED_TEST(NeuronLayerTest, TestTanH) {
   typedef typename TypeParam::Dtype Dtype;
   LayerParameter layer_param;
-  TanHLayer<Dtype> layer(layer_param);
+  TanHLayer<Dtype, Dtype> layer(layer_param);
   layer.SetUp(this->blob_bottom_vec_, this->blob_top_vec_);
   layer.Forward(this->blob_bottom_vec_, this->blob_top_vec_);
   // Test exact values
@@ -355,12 +353,12 @@ TYPED_TEST(NeuronLayerTest, TestTanH) {
     for (int j = 0; j < this->blob_bottom_->channels(); ++j) {
       for (int k = 0; k < this->blob_bottom_->height(); ++k) {
         for (int l = 0; l < this->blob_bottom_->width(); ++l) {
-          EXPECT_GE(this->blob_top_->data_at(i, j, k, l) + 1e-4,
-             (exp(2*this->blob_bottom_->data_at(i, j, k, l)) - 1) /
-             (exp(2*this->blob_bottom_->data_at(i, j, k, l)) + 1));
-          EXPECT_LE(this->blob_top_->data_at(i, j, k, l) - 1e-4,
-             (exp(2*this->blob_bottom_->data_at(i, j, k, l)) - 1) /
-             (exp(2*this->blob_bottom_->data_at(i, j, k, l)) + 1));
+          EXPECT_GE(this->blob_top_->data_at(i, j, k, l) + tol<Dtype>(1e-4, 1e-2),
+              (exp(2 * this->blob_bottom_->data_at(i, j, k, l)) - 1) /
+              (exp(2 * this->blob_bottom_->data_at(i, j, k, l)) + 1));
+          EXPECT_LE(this->blob_top_->data_at(i, j, k, l) - tol<Dtype>(1e-4, 1e-2),
+              (exp(2 * this->blob_bottom_->data_at(i, j, k, l)) - 1) /
+              (exp(2 * this->blob_bottom_->data_at(i, j, k, l)) + 1));
         }
       }
     }
@@ -370,10 +368,9 @@ TYPED_TEST(NeuronLayerTest, TestTanH) {
 TYPED_TEST(NeuronLayerTest, TestTanHGradient) {
   typedef typename TypeParam::Dtype Dtype;
   LayerParameter layer_param;
-  TanHLayer<Dtype> layer(layer_param);
-  GradientChecker<Dtype> checker(1e-2, 1e-3);
-  checker.CheckGradientEltwise(&layer, this->blob_bottom_vec_,
-      this->blob_top_vec_);
+  TanHLayer<Dtype, Dtype> layer(layer_param);
+  GradientChecker<Dtype> checker(tol<Dtype>(1e-2, 1e-1), tol<Dtype>(1e-3, 1e-1));
+  checker.CheckGradientEltwise(&layer, this->blob_bottom_vec_, this->blob_top_vec_);
 }
 
 TYPED_TEST(NeuronLayerTest, TestExpLayer) {
@@ -574,7 +571,7 @@ TYPED_TEST(NeuronLayerTest, TestDropoutTestPhase) {
   typedef typename TypeParam::Dtype Dtype;
   LayerParameter layer_param;
   layer_param.set_phase(TEST);
-  DropoutLayer<Dtype> layer(layer_param);
+  DropoutLayer<Dtype, Dtype> layer(layer_param);
   layer.SetUp(this->blob_bottom_vec_, this->blob_top_vec_);
   layer.Forward(this->blob_bottom_vec_, this->blob_top_vec_);
   // Now, check values
@@ -591,26 +588,24 @@ TYPED_TEST(NeuronLayerTest, TestDropoutGradient) {
   typedef typename TypeParam::Dtype Dtype;
   LayerParameter layer_param;
   layer_param.set_phase(TRAIN);
-  DropoutLayer<Dtype> layer(layer_param);
-  GradientChecker<Dtype> checker(1e-2, 1e-3);
-  checker.CheckGradientEltwise(&layer, this->blob_bottom_vec_,
-      this->blob_top_vec_);
+  DropoutLayer<Dtype, Dtype> layer(layer_param);
+  GradientChecker<Dtype> checker(tol<Dtype>(1e-2, 1e-1), tol<Dtype>(1e-3, 1e-1));
+  checker.CheckGradientEltwise(&layer, this->blob_bottom_vec_, this->blob_top_vec_);
 }
 
 TYPED_TEST(NeuronLayerTest, TestDropoutGradientTest) {
   typedef typename TypeParam::Dtype Dtype;
   LayerParameter layer_param;
   layer_param.set_phase(TEST);
-  DropoutLayer<Dtype> layer(layer_param);
-  GradientChecker<Dtype> checker(1e-2, 1e-3);
-  checker.CheckGradientEltwise(&layer, this->blob_bottom_vec_,
-      this->blob_top_vec_);
+  DropoutLayer<Dtype, Dtype> layer(layer_param);
+  GradientChecker<Dtype> checker(tol<Dtype>(1e-2, 1e-1), tol<Dtype>(1e-3, 1e-1));
+  checker.CheckGradientEltwise(&layer, this->blob_bottom_vec_, this->blob_top_vec_);
 }
 
 TYPED_TEST(NeuronLayerTest, TestBNLL) {
   typedef typename TypeParam::Dtype Dtype;
   LayerParameter layer_param;
-  BNLLLayer<Dtype> layer(layer_param);
+  BNLLLayer<Dtype, Dtype> layer(layer_param);
   layer.SetUp(this->blob_bottom_vec_, this->blob_top_vec_);
   layer.Forward(this->blob_bottom_vec_, this->blob_top_vec_);
   // Now, check values
@@ -625,18 +620,17 @@ TYPED_TEST(NeuronLayerTest, TestBNLL) {
 TYPED_TEST(NeuronLayerTest, TestBNLLGradient) {
   typedef typename TypeParam::Dtype Dtype;
   LayerParameter layer_param;
-  BNLLLayer<Dtype> layer(layer_param);
-  GradientChecker<Dtype> checker(1e-2, 1e-3);
-  checker.CheckGradientEltwise(&layer, this->blob_bottom_vec_,
-      this->blob_top_vec_);
+  BNLLLayer<Dtype, Dtype> layer(layer_param);
+  GradientChecker<Dtype> checker(tol<Dtype>(1e-2, 1e-1), tol<Dtype>(1e-3, 1e-1));
+  checker.CheckGradientEltwise(&layer, this->blob_bottom_vec_, this->blob_top_vec_);
 }
 
 TYPED_TEST(NeuronLayerTest, TestPReLUParam) {
   typedef typename TypeParam::Dtype Dtype;
   LayerParameter layer_param;
-  PReLULayer<Dtype> layer(layer_param);
+  PReLULayer<Dtype, Dtype> layer(layer_param);
   layer.SetUp(this->blob_bottom_vec_, this->blob_top_vec_);
-  const Dtype* slopes = layer.blobs()[0]->cpu_data();
+  const Dtype* slopes = layer.blobs()[0]->template cpu_data<Dtype>();
   int count = layer.blobs()[0]->count();
   for (int i = 0; i < count; ++i, ++slopes) {
     EXPECT_EQ(*slopes, 0.25);
@@ -646,7 +640,7 @@ TYPED_TEST(NeuronLayerTest, TestPReLUParam) {
 TYPED_TEST(NeuronLayerTest, TestPReLUForward) {
   typedef typename TypeParam::Dtype Dtype;
   LayerParameter layer_param;
-  PReLULayer<Dtype> layer(layer_param);
+  PReLULayer<Dtype, Dtype> layer(layer_param);
   layer.SetUp(this->blob_bottom_vec_, this->blob_top_vec_);
   FillerParameter filler_param;
   GaussianFiller<Dtype> filler(filler_param);
@@ -658,7 +652,7 @@ TYPED_TEST(NeuronLayerTest, TestPReLUForwardChannelShared) {
   typedef typename TypeParam::Dtype Dtype;
   LayerParameter layer_param;
   layer_param.mutable_prelu_param()->set_channel_shared(true);
-  PReLULayer<Dtype> layer(layer_param);
+  PReLULayer<Dtype, Dtype> layer(layer_param);
   layer.SetUp(this->blob_bottom_vec_, this->blob_top_vec_);
   this->TestPReLU(&layer);
 }
@@ -666,25 +660,23 @@ TYPED_TEST(NeuronLayerTest, TestPReLUForwardChannelShared) {
 TYPED_TEST(NeuronLayerTest, TestPReLUGradient) {
   typedef typename TypeParam::Dtype Dtype;
   LayerParameter layer_param;
-  PReLULayer<Dtype> layer(layer_param);
+  PReLULayer<Dtype, Dtype> layer(layer_param);
   layer.SetUp(this->blob_bottom_vec_, this->blob_top_vec_);
   FillerParameter filler_param;
   GaussianFiller<Dtype> filler(filler_param);
   filler.Fill(layer.blobs()[0].get());
-  GradientChecker<Dtype> checker(1e-2, 1e-3, 1701, 0., 0.01);
-  checker.CheckGradientExhaustive(&layer, this->blob_bottom_vec_,
-      this->blob_top_vec_);
+  GradientChecker<Dtype> checker(tol<Dtype>(1e-2, 2e-2), tol<Dtype>(1e-3, 1e-1), 1701, 0., 0.01);
+  checker.CheckGradientExhaustive(&layer, this->blob_bottom_vec_, this->blob_top_vec_);
 }
 
 TYPED_TEST(NeuronLayerTest, TestPReLUGradientChannelShared) {
   typedef typename TypeParam::Dtype Dtype;
   LayerParameter layer_param;
   layer_param.mutable_prelu_param()->set_channel_shared(true);
-  PReLULayer<Dtype> layer(layer_param);
+  PReLULayer<Dtype, Dtype> layer(layer_param);
   layer.SetUp(this->blob_bottom_vec_, this->blob_top_vec_);
-  GradientChecker<Dtype> checker(1e-2, 1e-3, 1701, 0., 0.01);
-  checker.CheckGradientExhaustive(&layer, this->blob_bottom_vec_,
-      this->blob_top_vec_);
+  GradientChecker<Dtype> checker(tol<Dtype>(1e-2, 2e-2), tol<Dtype>(1e-3, 1e-1), 1701, 0., 0.01);
+  checker.CheckGradientExhaustive(&layer, this->blob_bottom_vec_, this->blob_top_vec_);
 }
 
 TYPED_TEST(NeuronLayerTest, TestPReLUConsistencyReLU) {
@@ -692,13 +684,13 @@ TYPED_TEST(NeuronLayerTest, TestPReLUConsistencyReLU) {
   LayerParameter prelu_layer_param;
   LayerParameter relu_layer_param;
   relu_layer_param.mutable_relu_param()->set_negative_slope(0.25);
-  PReLULayer<Dtype> prelu(prelu_layer_param);
-  ReLULayer<Dtype> relu(relu_layer_param);
+  PReLULayer<Dtype, Dtype> prelu(prelu_layer_param);
+  ReLULayer<Dtype, Dtype> relu(relu_layer_param);
   // Set up blobs
-  vector<Blob<Dtype>*> blob_bottom_vec_2;
-  vector<Blob<Dtype>*> blob_top_vec_2;
-  shared_ptr<Blob<Dtype> > blob_bottom_2(new Blob<Dtype>());
-  shared_ptr<Blob<Dtype> > blob_top_2(new Blob<Dtype>());
+  vector<Blob*> blob_bottom_vec_2;
+  vector<Blob*> blob_top_vec_2;
+  shared_ptr<TBlob<Dtype>> blob_bottom_2(new TBlob<Dtype>());
+  shared_ptr<TBlob<Dtype>> blob_top_2(new TBlob<Dtype>());
   blob_bottom_vec_2.push_back(blob_bottom_2.get());
   blob_top_vec_2.push_back(blob_top_2.get());
   blob_bottom_2->CopyFrom(*this->blob_bottom_, false, true);
@@ -712,15 +704,13 @@ TYPED_TEST(NeuronLayerTest, TestPReLUConsistencyReLU) {
     EXPECT_EQ(this->blob_top_->cpu_data()[s], blob_top_2->cpu_data()[s]);
   }
   // Check backward
-  shared_ptr<Blob<Dtype> > tmp_blob(new Blob<Dtype>());
+  shared_ptr<TBlob<Dtype>> tmp_blob(new TBlob<Dtype>());
   tmp_blob->ReshapeLike(*blob_top_2.get());
   FillerParameter filler_param;
   GaussianFiller<Dtype> filler(filler_param);
   filler.Fill(tmp_blob.get());
-  caffe_copy(blob_top_2->count(), tmp_blob->cpu_data(),
-      this->blob_top_->mutable_cpu_diff());
-  caffe_copy(blob_top_2->count(), tmp_blob->cpu_data(),
-      blob_top_2->mutable_cpu_diff());
+  caffe_copy<Dtype>(blob_top_2->count(), tmp_blob->cpu_data(), this->blob_top_->mutable_cpu_diff());
+  caffe_copy<Dtype>(blob_top_2->count(), tmp_blob->cpu_data(), blob_top_2->mutable_cpu_diff());
   vector<bool> propagate_down;
   propagate_down.push_back(true);
   prelu.Backward(this->blob_top_vec_, propagate_down, this->blob_bottom_vec_);
@@ -735,21 +725,20 @@ TYPED_TEST(NeuronLayerTest, TestPReLUInPlace) {
   // Set layer parameters
   LayerParameter ip_layer_param;
   LayerParameter prelu_layer_param;
-  InnerProductParameter *ip_param =
-      ip_layer_param.mutable_inner_product_param();
+  InnerProductParameter* ip_param = ip_layer_param.mutable_inner_product_param();
   ip_param->mutable_weight_filler()->set_type("gaussian");
   ip_param->set_num_output(3);
-  InnerProductLayer<Dtype> ip(ip_layer_param);
-  PReLULayer<Dtype> prelu(prelu_layer_param);
-  InnerProductLayer<Dtype> ip2(ip_layer_param);
-  PReLULayer<Dtype> prelu2(prelu_layer_param);
+  InnerProductLayer<Dtype, Dtype> ip(ip_layer_param);
+  PReLULayer<Dtype, Dtype> prelu(prelu_layer_param);
+  InnerProductLayer<Dtype, Dtype> ip2(ip_layer_param);
+  PReLULayer<Dtype, Dtype> prelu2(prelu_layer_param);
   // Set up blobs
-  vector<Blob<Dtype>*> blob_bottom_vec_2;
-  vector<Blob<Dtype>*> blob_middle_vec_2;
-  vector<Blob<Dtype>*> blob_top_vec_2;
-  shared_ptr<Blob<Dtype> > blob_bottom_2(new Blob<Dtype>());
-  shared_ptr<Blob<Dtype> > blob_middle_2(new Blob<Dtype>());
-  shared_ptr<Blob<Dtype> > blob_top_2(new Blob<Dtype>());
+  vector<Blob*> blob_bottom_vec_2;
+  vector<Blob*> blob_middle_vec_2;
+  vector<Blob*> blob_top_vec_2;
+  shared_ptr<TBlob<Dtype>> blob_bottom_2(new TBlob<Dtype>());
+  shared_ptr<TBlob<Dtype>> blob_middle_2(new TBlob<Dtype>());
+  shared_ptr<TBlob<Dtype>> blob_top_2(new TBlob<Dtype>());
   blob_bottom_vec_2.push_back(blob_bottom_2.get());
   blob_middle_vec_2.push_back(blob_middle_2.get());
   blob_top_vec_2.push_back(blob_top_2.get());
@@ -759,8 +748,8 @@ TYPED_TEST(NeuronLayerTest, TestPReLUInPlace) {
   prelu.SetUp(this->blob_top_vec_, this->blob_top_vec_);
   ip2.SetUp(blob_bottom_vec_2, blob_middle_vec_2);
   prelu2.SetUp(blob_middle_vec_2, blob_top_vec_2);
-  caffe_copy(ip2.blobs()[0]->count(), ip.blobs()[0]->cpu_data(),
-      ip2.blobs()[0]->mutable_cpu_data());
+  caffe_copy<Dtype>(ip2.blobs()[0]->count(), ip.blobs()[0]->template cpu_data<Dtype>(),
+      ip2.blobs()[0]->template mutable_cpu_data<Dtype>());
   // Forward in-place
   ip.Forward(this->blob_bottom_vec_, this->blob_top_vec_);
   prelu.Forward(this->blob_top_vec_, this->blob_top_vec_);
@@ -772,15 +761,13 @@ TYPED_TEST(NeuronLayerTest, TestPReLUInPlace) {
     EXPECT_EQ(this->blob_top_->cpu_data()[s], blob_top_2->cpu_data()[s]);
   }
   // Fill top diff with random numbers
-  shared_ptr<Blob<Dtype> > tmp_blob(new Blob<Dtype>());
+  shared_ptr<TBlob<Dtype>> tmp_blob(new TBlob<Dtype>());
   tmp_blob->ReshapeLike(*blob_top_2.get());
   FillerParameter filler_param;
   GaussianFiller<Dtype> filler(filler_param);
   filler.Fill(tmp_blob.get());
-  caffe_copy(blob_top_2->count(), tmp_blob->cpu_data(),
-      this->blob_top_->mutable_cpu_diff());
-  caffe_copy(blob_top_2->count(), tmp_blob->cpu_data(),
-      blob_top_2->mutable_cpu_diff());
+  caffe_copy<Dtype>(blob_top_2->count(), tmp_blob->cpu_data(), this->blob_top_->mutable_cpu_diff());
+  caffe_copy<Dtype>(blob_top_2->count(), tmp_blob->cpu_data(), blob_top_2->mutable_cpu_diff());
   // Backward in-place
   vector<bool> propagate_down;
   propagate_down.push_back(true);
@@ -794,24 +781,26 @@ TYPED_TEST(NeuronLayerTest, TestPReLUInPlace) {
     EXPECT_EQ(this->blob_bottom_->cpu_diff()[s], blob_bottom_2->cpu_diff()[s]);
   }
   for (int s = 0; s < ip.blobs()[0]->count(); ++s) {
-    EXPECT_EQ(ip.blobs()[0]->cpu_diff()[s], ip2.blobs()[0]->cpu_diff()[s]);
+    EXPECT_EQ(ip.blobs()[0]->template cpu_diff<Dtype>()[s],
+        ip2.blobs()[0]->template cpu_diff<Dtype>()[s]);
   }
   for (int s = 0; s < ip.blobs()[1]->count(); ++s) {
-    EXPECT_EQ(ip.blobs()[1]->cpu_diff()[s], ip2.blobs()[1]->cpu_diff()[s]);
+    EXPECT_EQ(ip.blobs()[1]->template cpu_diff<Dtype>()[s],
+        ip2.blobs()[1]->template cpu_diff<Dtype>()[s]);
   }
   for (int s = 0; s < prelu.blobs()[0]->count(); ++s) {
-    EXPECT_EQ(prelu.blobs()[0]->cpu_diff()[s],
-        prelu2.blobs()[0]->cpu_diff()[s]);
+    EXPECT_EQ(prelu.blobs()[0]->template cpu_diff<Dtype>()[s],
+        prelu2.blobs()[0]->template cpu_diff<Dtype>()[s]);
   }
 }
 
 #ifdef USE_CUDNN
-template <typename Dtype>
+
+template<typename Dtype>
 class CuDNNNeuronLayerTest : public GPUDeviceTest<Dtype> {
  protected:
-  CuDNNNeuronLayerTest()
-      : blob_bottom_(new Blob<Dtype>(2, 3, 4, 5)),
-        blob_top_(new Blob<Dtype>()) {
+  CuDNNNeuronLayerTest() : blob_bottom_(new TBlob<Dtype>(2, 3, 4, 5)),
+                           blob_top_(new TBlob<Dtype>()) {
     Caffe::set_random_seed(1701);
     // fill the values
     FillerParameter filler_param;
@@ -820,18 +809,55 @@ class CuDNNNeuronLayerTest : public GPUDeviceTest<Dtype> {
     blob_bottom_vec_.push_back(blob_bottom_);
     blob_top_vec_.push_back(blob_top_);
   }
-  virtual ~CuDNNNeuronLayerTest() { delete blob_bottom_; delete blob_top_; }
-  Blob<Dtype>* const blob_bottom_;
-  Blob<Dtype>* const blob_top_;
-  vector<Blob<Dtype>*> blob_bottom_vec_;
-  vector<Blob<Dtype>*> blob_top_vec_;
+
+  virtual ~CuDNNNeuronLayerTest() {
+    delete blob_bottom_;
+    delete blob_top_;
+  }
+
+  void TestDropoutForward(const float dropout_ratio) {
+    LayerParameter layer_param;
+    // Fill in the given dropout_ratio, unless it's 0.5, in which case we don't
+    // set it explicitly to test that 0.5 is the default.
+    if (dropout_ratio != 0.5) {
+      layer_param.mutable_dropout_param()->set_dropout_ratio(dropout_ratio);
+    }
+    DropoutLayer<Dtype, Dtype> layer(layer_param);
+    layer_param.set_phase(TRAIN);
+    layer.SetUp(this->blob_bottom_vec_, this->blob_top_vec_);
+    layer.Forward(this->blob_bottom_vec_, this->blob_top_vec_);
+    // Now, check values
+    const Dtype* bottom_data = this->blob_bottom_->cpu_data();
+    const Dtype* top_data = this->blob_top_->cpu_data();
+    float scale = 1. / (1. - layer_param.dropout_param().dropout_ratio());
+    const int count = this->blob_bottom_->count();
+    // Initialize num_kept to count the number of inputs NOT dropped out.
+    int num_kept = 0;
+    for (int i = 0; i < count; ++i) {
+      if (top_data[i] != 0) {
+        ++num_kept;
+        EXPECT_FLOAT_EQ(top_data[i], bottom_data[i] * scale);
+      }
+    }
+    const Dtype std_error = sqrt(dropout_ratio * (1. - dropout_ratio) / count);
+    // Fail if the number dropped was more than 1.96 * std_error away from the
+    // expected number -- requires 95% confidence that the dropout layer is not
+    // obeying the given dropout_ratio for test failure.
+    const Dtype empirical_dropout_ratio = 1. - num_kept / Dtype(count);
+    EXPECT_NEAR(empirical_dropout_ratio, dropout_ratio, 1.96 * std_error);
+  }
+
+  TBlob<Dtype>* const blob_bottom_;
+  TBlob<Dtype>* const blob_top_;
+  vector<Blob*> blob_bottom_vec_;
+  vector<Blob*> blob_top_vec_;
 };
 
 TYPED_TEST_CASE(CuDNNNeuronLayerTest, TestDtypes);
 
 TYPED_TEST(CuDNNNeuronLayerTest, TestReLUCuDNN) {
   LayerParameter layer_param;
-  CuDNNReLULayer<TypeParam> layer(layer_param);
+  CuDNNReLULayer<TypeParam, TypeParam> layer(layer_param);
   layer.SetUp(this->blob_bottom_vec_, this->blob_top_vec_);
   layer.Forward(this->blob_bottom_vec_, this->blob_top_vec_);
   // Now, check values
@@ -845,17 +871,17 @@ TYPED_TEST(CuDNNNeuronLayerTest, TestReLUCuDNN) {
 
 TYPED_TEST(CuDNNNeuronLayerTest, TestReLUGradientCuDNN) {
   LayerParameter layer_param;
-  CuDNNReLULayer<TypeParam> layer(layer_param);
-  GradientChecker<TypeParam> checker(1e-2, 1e-3, 1701, 0., 0.01);
-  checker.CheckGradientEltwise(&layer, this->blob_bottom_vec_,
-      this->blob_top_vec_);
+  CuDNNReLULayer<TypeParam, TypeParam> layer(layer_param);
+  GradientChecker<TypeParam> checker(tol<TypeParam>(1e-2, 1e-2), tol<TypeParam>(1e-3, 1e-1), 1701,
+      0., 0.01);
+  checker.CheckGradientEltwise(&layer, this->blob_bottom_vec_, this->blob_top_vec_);
 }
 
 TYPED_TEST(CuDNNNeuronLayerTest, TestReLUWithNegativeSlopeCuDNN) {
   LayerParameter layer_param;
-  CHECK(google::protobuf::TextFormat::ParseFromString(
-      "relu_param { negative_slope: 0.01 }", &layer_param));
-  CuDNNReLULayer<TypeParam> layer(layer_param);
+  CHECK(google::protobuf::TextFormat::ParseFromString("relu_param { negative_slope: 0.01 }",
+      &layer_param));
+  CuDNNReLULayer<TypeParam, TypeParam> layer(layer_param);
   layer.SetUp(this->blob_bottom_vec_, this->blob_top_vec_);
   layer.Forward(this->blob_bottom_vec_, this->blob_top_vec_);
   // Now, check values
@@ -863,33 +889,33 @@ TYPED_TEST(CuDNNNeuronLayerTest, TestReLUWithNegativeSlopeCuDNN) {
   const TypeParam* top_data = this->blob_top_->cpu_data();
   for (int i = 0; i < this->blob_bottom_->count(); ++i) {
     if (top_data[i] >= 0) {
-      EXPECT_FLOAT_EQ(top_data[i], bottom_data[i]);
+      EXPECT_NEAR(top_data[i], bottom_data[i], tol<TypeParam>(0., 1e-4));
     } else {
-      EXPECT_FLOAT_EQ(top_data[i], bottom_data[i] * 0.01);
+      EXPECT_NEAR(top_data[i], bottom_data[i] * 0.01, tol<TypeParam>(1e-8, 1e-4));
     }
   }
 }
 
 TYPED_TEST(CuDNNNeuronLayerTest, TestReLUGradientWithNegativeSlopeCuDNN) {
   LayerParameter layer_param;
-  CHECK(google::protobuf::TextFormat::ParseFromString(
-      "relu_param { negative_slope: 0.01 }", &layer_param));
-  CuDNNReLULayer<TypeParam> layer(layer_param);
-  GradientChecker<TypeParam> checker(1e-2, 1e-3, 1701, 0., 0.01);
-  checker.CheckGradientEltwise(&layer, this->blob_bottom_vec_,
-      this->blob_top_vec_);
+  CHECK(google::protobuf::TextFormat::ParseFromString("relu_param { negative_slope: 0.01 }",
+      &layer_param));
+  CuDNNReLULayer<TypeParam, TypeParam> layer(layer_param);
+  GradientChecker<TypeParam> checker(tol<TypeParam>(1e-2, 1e-2), tol<TypeParam>(1e-3, 1e-1), 1701,
+      0., 0.01);
+  checker.CheckGradientEltwise(&layer, this->blob_bottom_vec_, this->blob_top_vec_);
 }
 
 TYPED_TEST(CuDNNNeuronLayerTest, TestSigmoidCuDNN) {
   LayerParameter layer_param;
-  CuDNNSigmoidLayer<TypeParam> layer(layer_param);
+  CuDNNSigmoidLayer<TypeParam, TypeParam> layer(layer_param);
   layer.SetUp(this->blob_bottom_vec_, this->blob_top_vec_);
   layer.Forward(this->blob_bottom_vec_, this->blob_top_vec_);
   // Now, check values
   const TypeParam* bottom_data = this->blob_bottom_->cpu_data();
   const TypeParam* top_data = this->blob_top_->cpu_data();
   for (int i = 0; i < this->blob_bottom_->count(); ++i) {
-    EXPECT_FLOAT_EQ(top_data[i], 1. / (1 + exp(-bottom_data[i])));
+    EXPECT_NEAR(top_data[i], 1. / (1. + exp(-bottom_data[i])), tol<TypeParam>(1e-7, 1e-3));
     // check that we squashed the value between 0 and 1
     EXPECT_GE(top_data[i], 0.);
     EXPECT_LE(top_data[i], 1.);
@@ -898,15 +924,15 @@ TYPED_TEST(CuDNNNeuronLayerTest, TestSigmoidCuDNN) {
 
 TYPED_TEST(CuDNNNeuronLayerTest, TestSigmoidGradientCuDNN) {
   LayerParameter layer_param;
-  CuDNNSigmoidLayer<TypeParam> layer(layer_param);
-  GradientChecker<TypeParam> checker(1e-2, 1e-3, 1701, 0., 0.01);
-  checker.CheckGradientEltwise(&layer, this->blob_bottom_vec_,
-      this->blob_top_vec_);
+  CuDNNSigmoidLayer<TypeParam, TypeParam> layer(layer_param);
+  GradientChecker<TypeParam> checker(tol<TypeParam>(1e-2, 1e-1), tol<TypeParam>(1e-3, 1e-1), 1701,
+      0., 0.01);
+  checker.CheckGradientEltwise(&layer, this->blob_bottom_vec_, this->blob_top_vec_);
 }
 
 TYPED_TEST(CuDNNNeuronLayerTest, TestTanHCuDNN) {
   LayerParameter layer_param;
-  CuDNNTanHLayer<TypeParam> layer(layer_param);
+  CuDNNTanHLayer<TypeParam, TypeParam> layer(layer_param);
   layer.SetUp(this->blob_bottom_vec_, this->blob_top_vec_);
   layer.Forward(this->blob_bottom_vec_, this->blob_top_vec_);
   // Test exact values
@@ -914,12 +940,12 @@ TYPED_TEST(CuDNNNeuronLayerTest, TestTanHCuDNN) {
     for (int j = 0; j < this->blob_bottom_->channels(); ++j) {
       for (int k = 0; k < this->blob_bottom_->height(); ++k) {
         for (int l = 0; l < this->blob_bottom_->width(); ++l) {
-          EXPECT_GE(this->blob_top_->data_at(i, j, k, l) + 1e-4,
-             (exp(2*this->blob_bottom_->data_at(i, j, k, l)) - 1) /
-             (exp(2*this->blob_bottom_->data_at(i, j, k, l)) + 1));
-          EXPECT_LE(this->blob_top_->data_at(i, j, k, l) - 1e-4,
-             (exp(2*this->blob_bottom_->data_at(i, j, k, l)) - 1) /
-             (exp(2*this->blob_bottom_->data_at(i, j, k, l)) + 1));
+          EXPECT_GE(this->blob_top_->data_at(i, j, k, l) + tol<TypeParam>(1e-4, 1e-2),
+              (exp(2 * this->blob_bottom_->data_at(i, j, k, l)) - 1) /
+              (exp(2 * this->blob_bottom_->data_at(i, j, k, l)) + 1));
+          EXPECT_LE(this->blob_top_->data_at(i, j, k, l) - tol<TypeParam>(1e-4, 1e-2),
+              (exp(2 * this->blob_bottom_->data_at(i, j, k, l)) - 1) /
+              (exp(2 * this->blob_bottom_->data_at(i, j, k, l)) + 1));
         }
       }
     }
@@ -928,11 +954,45 @@ TYPED_TEST(CuDNNNeuronLayerTest, TestTanHCuDNN) {
 
 TYPED_TEST(CuDNNNeuronLayerTest, TestTanHGradientCuDNN) {
   LayerParameter layer_param;
-  CuDNNTanHLayer<TypeParam> layer(layer_param);
-  GradientChecker<TypeParam> checker(1e-2, 1e-3);
-  checker.CheckGradientEltwise(&layer, this->blob_bottom_vec_,
-      this->blob_top_vec_);
+  CuDNNTanHLayer<TypeParam, TypeParam> layer(layer_param);
+  GradientChecker<TypeParam> checker(tol<TypeParam>(1e-2, 1e-1), tol<TypeParam>(1e-3, 1e-1));
+  checker.CheckGradientEltwise(&layer, this->blob_bottom_vec_, this->blob_top_vec_);
 }
+
+TYPED_TEST(CuDNNNeuronLayerTest, TestDropoutHalf) {
+  const float kDropoutRatio = 0.5;
+  this->TestDropoutForward(kDropoutRatio);
+}
+
+TYPED_TEST(CuDNNNeuronLayerTest, TestDropoutThreeQuarters) {
+  const float kDropoutRatio = 0.75;
+  this->TestDropoutForward(kDropoutRatio);
+}
+
+TYPED_TEST(CuDNNNeuronLayerTest, TestDropoutTestPhase) {
+  LayerParameter layer_param;
+  layer_param.set_phase(TEST);
+  CuDNNDropoutLayer<TypeParam, TypeParam> layer(layer_param);
+  layer.SetUp(this->blob_bottom_vec_, this->blob_top_vec_);
+  layer.Forward(this->blob_bottom_vec_, this->blob_top_vec_);
+  // Now, check values
+  const TypeParam* bottom_data = this->blob_bottom_->cpu_data();
+  const TypeParam* top_data = this->blob_top_->cpu_data();
+  for (int i = 0; i < this->blob_bottom_->count(); ++i) {
+    if (top_data[i] != 0) {
+      EXPECT_EQ(top_data[i], bottom_data[i]);
+    }
+  }
+}
+
+TYPED_TEST(CuDNNNeuronLayerTest, TestDropoutGradientTest) {
+  LayerParameter layer_param;
+  layer_param.set_phase(TEST);
+  CuDNNDropoutLayer<TypeParam, TypeParam> layer(layer_param);
+  GradientChecker<TypeParam> checker(tol<TypeParam>(1e-2, 1e-1), tol<TypeParam>(1e-3, 1e-1));
+  checker.CheckGradientEltwise(&layer, this->blob_bottom_vec_, this->blob_top_vec_);
+}
+
 #endif
 
 }  // namespace caffe
